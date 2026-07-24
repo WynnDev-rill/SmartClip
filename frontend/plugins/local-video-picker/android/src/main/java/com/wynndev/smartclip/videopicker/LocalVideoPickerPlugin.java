@@ -25,6 +25,7 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
@@ -114,7 +115,7 @@ public class LocalVideoPickerPlugin extends Plugin {
             if (name == null || size < 0 || durationMs <= 0 || width <= 0 || height <= 0) throw new IllegalStateException("Required metadata unavailable");
             JSObject value = new JSObject(); value.put("filename", name); value.put("fileSize", size); value.put("duration", durationMs / 1000.0);
             value.put("width", width); value.put("height", height); value.put("resolution", width + " × " + height); value.put("mimeType", mime == null ? "Unknown" : mime); value.put("uri", uri.toString()); return value;
-        } finally { retriever.release(); }
+        } finally { releaseMediaMetadataRetrieverSafely(retriever); }
     }
 
     private long parseLong(String value) { if (value == null) return 0; try { return Long.parseLong(value); } catch (NumberFormatException ignored) { return 0; } }
@@ -254,9 +255,9 @@ public class LocalVideoPickerPlugin extends Plugin {
                     previousLuminance = luminance;
                 } finally {
                     if (thumbnail != null && thumbnail != frame && !thumbnail.isRecycled()) {
-                        thumbnail.recycle();
+                        recycleBitmapSafely(thumbnail);
                     }
-                    if (!frame.isRecycled()) frame.recycle();
+                    if (!frame.isRecycled()) recycleBitmapSafely(frame);
                 }
             }
 
@@ -303,8 +304,32 @@ public class LocalVideoPickerPlugin extends Plugin {
                 error
             );
         } finally {
-            extractor.release();
+            releaseMediaExtractorSafely(extractor);
+            releaseMediaMetadataRetrieverSafely(retriever);
+        }
+    }
+
+    private void releaseMediaMetadataRetrieverSafely(MediaMetadataRetriever retriever) {
+        try {
             retriever.release();
+        } catch (IOException ignored) {
+            // Cleanup must not replace an analysis result or an earlier decoder error.
+        }
+    }
+
+    private void releaseMediaExtractorSafely(MediaExtractor extractor) {
+        try {
+            extractor.release();
+        } catch (RuntimeException ignored) {
+            // Continue releasing the remaining analysis resources.
+        }
+    }
+
+    private void recycleBitmapSafely(Bitmap bitmap) {
+        try {
+            bitmap.recycle();
+        } catch (RuntimeException ignored) {
+            // A device bitmap cleanup failure must not abort analysis cleanup.
         }
     }
 
