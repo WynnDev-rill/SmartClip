@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { LayoutEditor } from "@/components/LayoutEditor";
 import { AutomaticHighlights } from "@/components/AutomaticHighlights";
+import { UrlWorkflow } from "@/components/UrlWorkflow";
 import type { HighlightCandidate } from "@/lib/highlights";
 import {
   coverCrop,
@@ -52,6 +53,7 @@ const formatDuration = (seconds: number) =>
 
 export default function App() {
   const input = useRef<HTMLInputElement>(null);
+  const [sourceMode, setSourceMode] = useState<"local" | "url">("local");
   const [video, setVideo] = useState<LocalVideoMetadata | null>(null);
   const [range, setRange] = useState<TrimRange>({ start: 0, end: 0 });
   const [loading, setLoading] = useState(false);
@@ -250,8 +252,12 @@ export default function App() {
         <p className="mx-auto mt-5 max-w-xl text-muted-foreground">
           Select, trim, and save an MP4 without uploading your video.
         </p>
-        <div className="mt-9 rounded-3xl border border-white/10 bg-white/[.04] p-4 shadow-2xl sm:p-7">
-          {!video ? (
+        <div aria-label="Source mode" className="mx-auto mt-8 grid max-w-xl grid-cols-2 gap-3 text-left">
+          <button className={`rounded-2xl border p-4 ${sourceMode === "local" ? "border-violet-400 bg-violet-400/10" : "border-white/10 bg-white/[.04]"}`} onClick={() => setSourceMode("local")}><strong>From Device</strong><span className="mt-1 block text-xs text-muted-foreground">Private, processed locally</span></button>
+          <button className={`rounded-2xl border p-4 ${sourceMode === "url" ? "border-violet-400 bg-violet-400/10" : "border-white/10 bg-white/[.04]"}`} onClick={() => setSourceMode("url")}><strong>Paste URL</strong><span className="mt-1 block text-xs text-muted-foreground">Processed through the private SmartClip server</span></button>
+        </div>
+        <div className="mt-5 rounded-3xl border border-white/10 bg-white/[.04] p-4 shadow-2xl sm:p-7">
+          {sourceMode === "url" ? <UrlWorkflow /> : !video ? (
             <div className="rounded-2xl border border-dashed border-violet-400/40 bg-black/20 px-5 py-14">
               <input
                 aria-label="Choose a video file"

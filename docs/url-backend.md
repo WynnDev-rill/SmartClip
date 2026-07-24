@@ -34,3 +34,7 @@ curl -H "Authorization: Bearer $SMARTCLIP_API_TOKEN" -H 'Content-Type: applicati
 ```
 
 Render Blueprint settings are in `render.yaml`: Docker Web Service, `main`, Free, automatic deploy, `/health`, and no other service. Free instances sleep, restart without persistence, have constrained CPU/RAM/disk, and can render much slower than video duration; long downloads/1080p may fail. This service makes no claim of unrestricted YouTube compatibility and supports public, non-DRM, non-login videos accepted by current yt-dlp. Cookies and sessions are deliberately unsupported. Next step is APK URL submission/status/result download integration; it is not part of this change.
+
+## Android client integration
+
+The APK's opt-in URL workflow uses `POST /api/url/inspect`, `POST /api/jobs`, `GET /api/jobs/{job_id}`, `POST /api/jobs/{job_id}/cancel`, `GET /api/jobs/{job_id}/results`, and authenticated `GET /api/files/{job_id}/{filename}`. A typed frontend client centralizes bearer authentication, timeouts, aborts, parsing, and safe user-facing errors. The non-sensitive active job ID is session-persisted for activity recreation; the token is build-time-only and is never placed in local/session storage. Candidate downloads stream in native Android code to scoped MediaStore under `Movies/SmartClip`.
