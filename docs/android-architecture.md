@@ -21,7 +21,13 @@ Android APK
     └── clip render and user-selected export
 ```
 
-No `server.url` is configured in `capacitor.config.ts`: Capacitor copies and serves `webDir` locally. The Android manifest intentionally requests no storage, camera, microphone, or internet permissions. Future access should prefer the system document picker and scoped storage rather than broad permissions.
+No `server.url` is configured in `capacitor.config.ts`: Capacitor copies and serves `webDir` locally. The manifest requests no storage, camera, microphone, or internet permissions. Picker grants provide narrow source access and Android 10+ scoped `MediaStore` creates app-owned results.
+
+## Current trim pipeline
+
+React owns range validation, presets, state presentation, and the Android/browser boundary. The native plugin opens the `content://` source with `MediaExtractor`, accepts H.264 and AAC tracks, seeks to the next sync sample, and copies compressed samples to an MP4 `MediaMuxer`. It preserves encoded dimensions and carries the rotation hint. No decode, re-encode, third-party media dependency, backend call, or network request occurs.
+
+The muxer writes a seekable cache file, then a streaming phase fills an `IS_PENDING` `MediaStore` item and publishes it at `Movies/SmartClip`. Both phases check cancellation; failures remove pending and temporary output. Sample timestamps and copied bytes drive real progress. Sync alignment can move the actual start later. Other codecs are rejected until composition justifies a maintained local encoder.
 
 ## APK identity, versions, and signing
 
@@ -61,6 +67,6 @@ The first Android build deliberately disables server-backed upload inside Capaci
 2. **Local media access:** system picker, persisted URI access when necessary, native metadata contract, cancellation, and temporary-file policy.
 3. **Processing engine:** select and package a license-compatible local FFmpeg implementation; probe and transcode on supported ABIs with no network.
 4. **Analysis:** implement deterministic scene/audio signals and highlight scoring with fixtures and performance budgets.
-5. **Clip workflow:** preview, manual controls, automatic clipping, progress, cancellation, and MediaStore export.
+5. **Clip workflow:** manual controls, progress, cancellation, and MediaStore export are complete; next add 9:16 facecam/gameplay composition with local encoding.
 6. **Hardening:** lifecycle recovery, instrumentation/device matrix, accessibility, performance, storage pressure, and privacy review.
 7. **Retirement:** remove hosted API requirements and eventually the transitional backend/deployment after all required functionality is local.

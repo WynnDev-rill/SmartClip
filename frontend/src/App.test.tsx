@@ -3,10 +3,14 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import * as picker from "@/lib/video-picker";
+import * as trim from "@/lib/trim";
 
 vi.mock("@/lib/video-picker", async (original) => ({
   ...await original<typeof import("@/lib/video-picker")>(),
   isNativeAndroid: vi.fn(() => false), chooseNativeVideo: vi.fn(), readBrowserVideo: vi.fn(), releaseBrowserVideo: vi.fn(),
+}));
+vi.mock("@/lib/trim", async (original) => ({
+  ...await original<typeof import("@/lib/trim")>(), exportNativeClip: vi.fn(), NativeEditor: { addListener: vi.fn(async () => ({ remove: vi.fn() })), cancelExport: vi.fn(), openMedia: vi.fn(), shareMedia: vi.fn() },
 }));
 
 const metadata: picker.LocalVideoMetadata = { filename: "holiday.mp4", fileSize: 1048576, duration: 65, width: 1920, height: 1080, resolution: "Full HD (1080p)", mimeType: "video/mp4", uri: "content://media/42", orientation: "Landscape", source: "Android native" };
@@ -52,6 +56,29 @@ describe("local video selection", () => {
   });
 
   it("clearly labels browser fallback limitations", () => {
-    render(<App />); expect(screen.getByText(/not equivalent to Android native metadata/i)).toBeInTheDocument(); expect(screen.getByText("Browser fallback")).toBeInTheDocument();
+    render(<App />); expect(screen.getByText(/trim UI testing only/i)).toBeInTheDocument(); expect(screen.getByText("Browser fallback")).toBeInTheDocument();
+  });
+
+  it("does not fake export in the browser fallback", async () => {
+    vi.mocked(picker.readBrowserVideo).mockResolvedValue({ ...metadata, source: "Browser preview" }); render(<App />);
+    await userEvent.upload(screen.getByLabelText("Choose a video file"), new File(["x"], "holiday.mp4")); await userEvent.click(await screen.findByRole("button", { name: /export clip/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Android-only"); expect(trim.exportNativeClip).not.toHaveBeenCalled();
+  });
+
+  it("uses the Android native export path and displays success", async () => {
+    vi.mocked(picker.isNativeAndroid).mockReturnValue(true); vi.mocked(picker.chooseNativeVideo).mockResolvedValue(metadata);
+    vi.mocked(trim.exportNativeClip).mockResolvedValue({ filename: "SmartClip_20260724_211500.mp4", duration: 65, fileSize: 2048, uri: "content://output", location: "Movies/SmartClip" });
+    render(<App />); await userEvent.click(screen.getByRole("button", { name: "Choose Video" })); await userEvent.click(await screen.findByRole("button", { name: /export clip/i }));
+    expect(await screen.findByText("Export completed")).toBeInTheDocument(); expect(trim.exportNativeClip).toHaveBeenCalledWith(metadata.uri, { start: 0, end: 65 });
+  });
+
+  it("shows native export failure", async () => {
+    vi.mocked(picker.isNativeAndroid).mockReturnValue(true); vi.mocked(picker.chooseNativeVideo).mockResolvedValue(metadata); vi.mocked(trim.exportNativeClip).mockRejectedValue(new Error("Insufficient storage"));
+    render(<App />); await userEvent.click(screen.getByRole("button", { name: "Choose Video" })); await userEvent.click(await screen.findByRole("button", { name: /export clip/i })); expect(await screen.findByRole("alert")).toHaveTextContent("Insufficient storage");
+  });
+
+  it("reports cancellation", async () => {
+    vi.mocked(picker.isNativeAndroid).mockReturnValue(true); vi.mocked(picker.chooseNativeVideo).mockResolvedValue(metadata); vi.mocked(trim.exportNativeClip).mockRejectedValue(new Error("Export cancelled"));
+    render(<App />); await userEvent.click(screen.getByRole("button", { name: "Choose Video" })); await userEvent.click(await screen.findByRole("button", { name: /export clip/i })); expect(await screen.findByRole("alert")).toHaveTextContent("Export cancelled");
   });
 });
