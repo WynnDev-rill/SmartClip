@@ -3,3 +3,4 @@
 @layer utilities{.grid-fade{background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:54px 54px;mask-image:linear-gradient(to bottom,black,transparent)}}
 @keyframes metadata-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .metadata-enter{animation:metadata-enter .25s ease-out both}@media(prefers-reduced-motion:reduce){.metadata-enter{animation:none}.animate-spin{animation:none!important}}
+@keyframes completion-enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}.completion-enter{animation:completion-enter .25s ease-out both}@media(prefers-reduced-motion:reduce){.completion-enter{animation:none}}

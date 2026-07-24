@@ -1,4 +1,5 @@
-import { Capacitor, registerPlugin } from "@capacitor/core";
+import { Capacitor } from "@capacitor/core";
+import { LocalVideoPlugin } from "./local-video-plugin";
 
 export const ACCEPTED_EXTENSIONS = ["mp4", "mov", "mkv", "webm"] as const;
 
@@ -14,12 +15,6 @@ export interface LocalVideoMetadata {
   orientation: "Portrait" | "Landscape" | "Square";
   source: "Android native" | "Browser preview";
 }
-
-interface NativeVideoPickerPlugin {
-  chooseVideo(): Promise<Omit<LocalVideoMetadata, "orientation" | "source">>;
-}
-
-const NativeVideoPicker = registerPlugin<NativeVideoPickerPlugin>("LocalVideoPicker");
 
 export const isSupportedVideo = (name: string) => {
   const extension = name.split(".").pop()?.toLowerCase();
@@ -46,7 +41,7 @@ function resolutionLabel(width: number, height: number) {
 }
 
 export async function chooseNativeVideo(): Promise<LocalVideoMetadata> {
-  const result = await NativeVideoPicker.chooseVideo();
+  const result = await LocalVideoPlugin.chooseVideo();
   if (!isSupportedVideo(result.filename)) throw new Error("Unsupported format. Choose an MP4, MOV, MKV, or WEBM video.");
   if (!result.duration || !result.width || !result.height) throw new Error("The video is missing required duration or resolution metadata.");
   return complete(result, "Android native");
