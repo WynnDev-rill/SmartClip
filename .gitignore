@@ -31,6 +31,8 @@ frontend/android/
 .gradle/
 *.apk
 *.aab
+*.jks
+*.keystore
 *.aar
 *.dex
 *.class

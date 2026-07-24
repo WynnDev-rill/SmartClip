@@ -23,6 +23,14 @@ Android APK
 
 No `server.url` is configured in `capacitor.config.ts`: Capacitor copies and serves `webDir` locally. The Android manifest intentionally requests no storage, camera, microphone, or internet permissions. Future access should prefer the system document picker and scoped storage rather than broad permissions.
 
+## APK identity, versions, and signing
+
+The generated Android application keeps the package/application ID `com.wynndev.smartclip`. Development APKs use Gradle's automatically managed debug keystore and are suitable only for development; a debug APK cannot update a release-signed installation.
+
+Distributable APKs use persistent release signing. GitHub Actions decodes the permanent keystore secret into the runner's temporary directory and supplies its path and credentials to a release-only Gradle init script through environment variables. Gradle applies the release signing configuration to `:app`, the APK signature is verified with `apksigner`, the APK is uploaded, and an always-running cleanup step deletes the temporary keystore. The keystore and credentials never belong in Git, artifacts, Gradle properties, or logs.
+
+Android's update trust is based on certificate continuity: the new APK must have the same application ID and be signed by the same certificate as the installed APK. It must also have a greater `versionCode`. Creating a new key—even with the same alias and passwords—creates a different certificate and prevents an in-place update. `frontend/android-version.properties` is the source of truth for `VERSION_CODE` and `VERSION_NAME`; the release init script applies them after Capacitor generates the native project.
+
 ## Reuse and replacement map
 
 | Area | Reuse | Migration action |
