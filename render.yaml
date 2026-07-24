@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: smartclip-url-service
+    runtime: docker
+    plan: free
+    branch: main
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: SMARTCLIP_API_TOKEN
+        sync: false
+      - key: MAX_CONCURRENT_JOBS
+        value: "1"

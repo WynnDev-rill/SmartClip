@@ -1,14 +1,20 @@
+import shutil
+
 from fastapi import APIRouter
-from pydantic import BaseModel
+
+from app.jobs import TERMINAL, manager
 
 router = APIRouter(tags=["system"])
 
 
-class HealthResponse(BaseModel):
-    status: str
-    service: str
-
-
-@router.get("/health", response_model=HealthResponse)
-async def health_check() -> HealthResponse:
-    return HealthResponse(status="ok", service="smartclip-api")
+@router.get("/health", summary="Public container health check")
+def health_check() -> dict:
+    return {
+        "status": "ok",
+        "service": "smartclip-url-service",
+        "version": "1.0.0",
+        "ffmpegAvailable": shutil.which("ffmpeg") is not None,
+        "ffprobeAvailable": shutil.which("ffprobe") is not None,
+        "ytDlpAvailable": shutil.which("yt-dlp") is not None,
+        "jobActive": any(j.state not in TERMINAL for j in manager.jobs.values()),
+    }
