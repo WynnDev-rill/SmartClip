@@ -12,4 +12,8 @@ dependencies {
   implementation project(':capacitor-android')
   implementation "androidx.activity:activity:$androidxActivityVersion"
   implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+  // Media3 Transformer is AndroidX's maintained, hardware-accelerated on-device re-encode engine.
+  implementation "androidx.media3:media3-transformer:1.8.0"
+  implementation "androidx.media3:media3-effect:1.8.0"
+  implementation "androidx.media3:media3-common:1.8.0"
 }

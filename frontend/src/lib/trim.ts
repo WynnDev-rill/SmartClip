@@ -3,8 +3,8 @@ import { LocalVideoPlugin } from "./local-video-plugin";
 export const MIN_CLIP_DURATION = 1;
 
 export type TrimRange = { start: number; end: number };
-export type ExportState = "idle" | "preparing" | "trimming" | "saving" | "completed" | "failed" | "cancelled";
-export type ExportResult = { filename: string; duration: number; fileSize: number; uri: string; location: string };
+export type ExportState = "idle" | "preparing" | "trimming" | "rendering" | "saving" | "completed" | "failed" | "cancelled";
+export type ExportResult = { filename: string; duration: number; fileSize: number; uri: string; location: string; width?: number; height?: number };
 export type ExportProgress = { state: Exclude<ExportState, "idle" | "failed" | "cancelled">; progress?: number };
 
 export const NativeEditor = LocalVideoPlugin;

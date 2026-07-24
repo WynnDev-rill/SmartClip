@@ -23,11 +23,25 @@ Android APK
 
 No `server.url` is configured in `capacitor.config.ts`: Capacitor copies and serves `webDir` locally. The manifest requests no storage, camera, microphone, or internet permissions. Picker grants provide narrow source access and Android 10+ scoped `MediaStore` creates app-owned results.
 
-## Current trim pipeline
+## Trim and vertical composition pipelines
 
 React owns range validation, presets, state presentation, and the Android/browser boundary. The native plugin opens the `content://` source with `MediaExtractor`, accepts H.264 and AAC tracks, seeks to the next sync sample, and copies compressed samples to an MP4 `MediaMuxer`. It preserves encoded dimensions and carries the rotation hint. No decode, re-encode, third-party media dependency, backend call, or network request occurs.
 
 The muxer writes a seekable cache file, then a streaming phase fills an `IS_PENDING` `MediaStore` item and publishes it at `Movies/SmartClip`. Both phases check cancellation; failures remove pending and temporary output. Sample timestamps and copied bytes drive real progress. Sync alignment can move the actual start later. Other codecs are rejected until composition justifies a maintained local encoder.
+
+Vertical export is that justified re-encode path. It uses **AndroidX Media3 1.8 Transformer/Effect/Common**, maintained as part of Jetpack, with platform `MediaCodec` acceleration. Stream copy cannot change pixels, so it cannot crop, scale, blur, round corners, composite facecam/gameplay, or change dimensions. The Transformer decodes locally, applies aspect-safe GPU effects, encodes H.264 to a cache MP4, retains compatible audio through the Media3 pipeline, and then publishes via the existing pending-item MediaStore flow. No native executable or binary is checked into this repository; Capacitor injects the text-based plugin and Gradle resolves the AndroidX artifacts.
+
+The editor models source and output rectangles as normalized top-left coordinates `(x, y, width, height)` in `[0,1]`. A minimum width/height of `0.02` prevents degenerate regions, and every update clamps the rectangle to its parent bounds. Source crop coordinates are converted to Media3 normalized-device coordinates only at the native boundary. Cover and contain calculations preserve the source aspect ratio; pixels are never stretched.
+
+Modes and presets are:
+
+- **Smart Crop:** aspect-fill cover crop with horizontal/vertical focal point and 1–4× zoom.
+- **Fit with Background:** full gameplay is kept visible with a configurable background treatment.
+- **Split:** gameplay plus an independently cropped facecam at top, bottom, or one of four corners.
+- **Manual Overlay:** draggable/resizable facecam output with corner-radius control over the gameplay base.
+- Presets cover gameplay full, both top/bottom splits, corner facecam, and fit with blur.
+
+Auto quality chooses `1080×1920` only when source detail and reported device memory make that practical; otherwise it selects `720×1280`. Both explicit sizes are available and upscaling is warned about. Encoder availability, thermal throttling, long render time, temporary-space requirements, and device-specific codec limits remain expected constraints. The bridge reports preparing, rendering, saving, completed, failed, and cancelled states; cancellation stops Transformer or copy work and pending gallery entries are removed. Source permission loss, unsupported decode, storage pressure, and rendering failures have distinct user-facing errors. Export currently runs while the app process remains alive; Android process death/background eviction cancels the in-process job and cache cleanup occurs on the next system cache sweep.
 
 ## APK identity, versions, and signing
 
@@ -67,6 +81,7 @@ The first Android build deliberately disables server-backed upload inside Capaci
 2. **Local media access:** system picker, persisted URI access when necessary, native metadata contract, cancellation, and temporary-file policy.
 3. **Processing engine:** select and package a license-compatible local FFmpeg implementation; probe and transcode on supported ABIs with no network.
 4. **Analysis:** implement deterministic scene/audio signals and highlight scoring with fixtures and performance budgets.
-5. **Clip workflow:** manual controls, progress, cancellation, and MediaStore export are complete; next add 9:16 facecam/gameplay composition with local encoding.
-6. **Hardening:** lifecycle recovery, instrumentation/device matrix, accessibility, performance, storage pressure, and privacy review.
-7. **Retirement:** remove hosted API requirements and eventually the transitional backend/deployment after all required functionality is local.
+5. **Clip workflow:** manual trim and 9:16 facecam/gameplay composition controls, cancellation, and MediaStore export are complete.
+6. **Next step:** automatic highlight candidate generation using deterministic local scene/audio signals (no viral-confidence feature yet).
+7. **Hardening:** lifecycle recovery, instrumentation/device matrix, accessibility, performance, storage pressure, and privacy review.
+8. **Retirement:** remove hosted API requirements and eventually the transitional backend/deployment after all required functionality is local.
