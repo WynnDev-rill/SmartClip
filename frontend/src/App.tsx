@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { type ChangeEvent, useRef, useState } from "react";
 import { CircleCheck, FileVideo, Info, LoaderCircle, Scissors, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { appVersion, getPlatform } from "@/lib/platform";
@@ -27,6 +27,16 @@ export default function App() {
 
   const remove = () => { releaseBrowserVideo(video); setVideo(null); setError(""); };
 
+  const handleBrowserSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) {
+      setLoading(false);
+      setError("");
+      return;
+    }
+    void runSelection(file);
+  };
+
   return <main className="min-h-screen px-5 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(2rem,env(safe-area-inset-top))] sm:px-8">
     <nav className="mx-auto flex max-w-5xl items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary"><Scissors size={20}/></span><div><p className="font-semibold">SmartClip</p><p className="text-xs text-muted-foreground">Private, on-device workspace</p></div></nav>
     <section className="mx-auto mt-12 max-w-3xl text-center sm:mt-16">
@@ -34,7 +44,7 @@ export default function App() {
       <p className="mx-auto mt-5 max-w-xl text-muted-foreground">Your video stays on this device. SmartClip reads only the metadata needed to prepare the next step.</p>
       <div className="mt-9 rounded-3xl border border-white/10 bg-white/[.04] p-4 shadow-2xl sm:p-7">
         {!video ? <div className="rounded-2xl border border-dashed border-violet-400/40 bg-black/20 px-5 py-14">
-          <input aria-label="Choose a video file" ref={input} className="sr-only" type="file" accept=".mp4,.mov,.mkv,.webm,video/mp4,video/quicktime,video/x-matroska,video/webm" onCancel={() => setError("Video selection was cancelled. No file was changed.")} onChange={e => runSelection(e.target.files?.[0])}/>
+          <input aria-label="Choose a video file" ref={input} className="sr-only" type="file" accept=".mp4,.mov,.mkv,.webm,video/mp4,video/quicktime,video/x-matroska,video/webm" onChange={handleBrowserSelection}/>
           <span className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-violet-400/10 text-violet-300"><Upload/></span><h2 className="mt-5 text-xl font-semibold">Select one local video</h2><p className="mt-2 text-sm text-muted-foreground">MP4, MOV, MKV, or WEBM</p>
           <Button className="mt-6 active:scale-[.97] transition-transform" disabled={loading} onClick={() => native ? runSelection() : input.current?.click()}>{loading ? <><LoaderCircle className="animate-spin" size={17}/> Reading metadata…</> : "Choose Video"}</Button>
           <p className="mx-auto mt-4 max-w-md text-xs text-muted-foreground">{native ? "Android's system picker provides a durable content URI; no broad storage permission is requested." : "Browser fallback: metadata support depends on your browser and is not equivalent to Android native metadata."}</p>

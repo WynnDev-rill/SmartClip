@@ -28,9 +28,12 @@ describe("local video selection", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Unsupported format");
   });
 
-  it("reports a cancelled browser picker", () => {
-    render(<App />); fireEvent(screen.getByLabelText("Choose a video file"), new Event("cancel"));
-    expect(screen.getByRole("alert")).toHaveTextContent("cancelled");
+  it("quietly treats an empty browser selection as cancellation", () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Choose a video file"), { target: { files: [] } });
+    expect(picker.readBrowserVideo).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose Video" })).toBeEnabled();
   });
 
   it("removes the selected video and releases browser resources", async () => {
