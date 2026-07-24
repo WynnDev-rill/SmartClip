@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { analyzeHighlights, type DetectionMode, type DurationMode, type HighlightCandidate } from "@/lib/highlights";
 import { NativeEditor } from "@/lib/trim";
+import { SegmentedControl, StatusBadge } from "./AppShell";
 
 const clock = (ms: number) => `${Math.floor(ms / 60_000)}:${Math.floor(ms % 60_000 / 1000).toString().padStart(2, "0")}`;
 export interface AutomaticHighlightsProps {
@@ -45,16 +46,17 @@ export function AutomaticHighlights({ uri, durationSeconds, native, disabled, on
   return <section aria-label="Automatic Highlights" className="mt-5 rounded-2xl border border-violet-400/20 bg-black/20 p-4 sm:p-5">
     <h3 className="font-semibold">Automatic Highlights</h3>
     <p className="mt-1 text-xs text-muted-foreground">Deterministic, on-device activity analysis. “Viral Confidence” is a heuristic highlight score—not a virality prediction.</p>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-      <label className="text-sm">Target duration<select aria-label="Target duration" className="mt-1 w-full rounded-md bg-slate-900 p-2" value={durationMode} onChange={(e) => setDurationMode(e.target.value as DurationMode)}><option value="30-plus">30 seconds or more</option><option value="60-plus">60 seconds or more</option><option value="auto">Auto</option></select></label>
-      <label className="text-sm">Detection mode<select aria-label="Detection mode" className="mt-1 w-full rounded-md bg-slate-900 p-2" value={detectionMode} onChange={(e) => setDetectionMode(e.target.value as DetectionMode)}><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option></select></label>
+    <div className="mt-4 grid gap-5">
+      <SegmentedControl<DurationMode> label="Target duration" value={durationMode} onChange={setDurationMode} options={[["30-plus","30+ sec"],["60-plus","60+ sec"],["auto","Auto"]]}/>
+      <SegmentedControl<DetectionMode> label="Detection mode" value={detectionMode} onChange={setDetectionMode} options={[["conservative","Conservative"],["balanced","Balanced"],["aggressive","Aggressive"]]}/>
     </div>
     <div className="mt-4 flex flex-wrap gap-2"><Button disabled={disabled || !["idle", "completed", "failed", "cancelled"].includes(phase)} onClick={analyze}>Analyze Video</Button><Button variant="outline" disabled={["idle", "completed", "failed", "cancelled"].includes(phase)} onClick={() => NativeEditor.cancelAnalysis()}>Cancel Analysis</Button></div>
     {phase !== "idle" && <p aria-live="polite" className="mt-3 text-sm capitalize">Analysis: {phase}</p>}
     {message && <p className="mt-3 text-sm text-amber-300">{message}</p>}
     {candidates.length > 0 && <><div className="mt-5 flex flex-wrap gap-2"><Button variant="outline" onClick={() => setSelected(new Set(candidates.map((c) => c.id)))}>Select all</Button><Button variant="outline" onClick={() => setSelected(new Set())}>Clear selection</Button><Button disabled={!chosen.length} onClick={exportMany}>Export selected</Button></div>
-      <div className="mt-3 grid gap-3">{candidates.map((candidate, index) => <article key={candidate.id} className="rounded-xl border border-white/10 p-4">
-        <div className="flex justify-between gap-3"><h4 className="font-semibold">Candidate {index + 1}</h4><strong>{candidate.score}/100</strong></div>
+      <div className="mt-3 grid gap-3">{candidates.map((candidate, index) => <article key={candidate.id} className={`rounded-xl border p-4 ${selected.has(candidate.id) ? "border-violet-400 bg-violet-400/[.06]" : "border-white/10"}`}>
+        <div className="flex justify-between gap-3"><h4 className="font-semibold">Candidate {index + 1}</h4><StatusBadge tone="accent">Score {candidate.score}/100</StatusBadge></div>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10" aria-label={`Highlight score ${candidate.score} out of 100`}><div className="h-full rounded-full bg-violet-400" style={{width: `${candidate.score}%`}}/></div>
         <p className="mt-1 font-mono text-sm">{clock(candidate.startMs)} – {clock(candidate.endMs)} · {clock(candidate.durationMs)}</p><p className="text-sm text-violet-300">Viral Confidence: {candidate.confidence}</p>
         <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">{candidate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
         <div className="mt-3 flex flex-wrap gap-2"><label className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label={`Select candidate ${index + 1}`} checked={selected.has(candidate.id)} onChange={() => setSelected((old) => { const next = new Set(old); if (next.has(candidate.id)) next.delete(candidate.id); else next.add(candidate.id); return next; })}/>Select</label><Button variant="outline" onClick={() => onAdjust(candidate)}>Preview</Button><Button variant="outline" onClick={() => onAdjust(candidate)}>Adjust manually</Button><Button onClick={() => onExport([candidate])}>Export</Button></div>{statuses[candidate.id] && <p className="mt-2 text-xs">{statuses[candidate.id]}</p>}
