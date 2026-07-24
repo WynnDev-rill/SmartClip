@@ -18,12 +18,15 @@ export interface LocalVideoPlugin {
     uri: string;
     location: string;
   }>;
+  exportComposition(options: { uri: string; startMs: number; endMs: number; layout: unknown; quality: "auto" | "720p" | "1080p"; outputWidth: number; outputHeight: number }): Promise<{
+    filename: string; duration: number; fileSize: number; uri: string; location: string; width: number; height: number;
+  }>;
   cancelExport(): Promise<void>;
   openMedia(options: { uri: string }): Promise<void>;
   shareMedia(options: { uri: string; filename: string }): Promise<void>;
   addListener(
     event: "exportProgress",
-    callback: (event: { state: "preparing" | "trimming" | "saving" | "completed"; progress?: number }) => void,
+    callback: (event: { state: "preparing" | "trimming" | "rendering" | "saving" | "completed"; progress?: number }) => void,
   ): Promise<{ remove(): Promise<void> }>;
 }
 

@@ -1,8 +1,18 @@
 # SmartClip
 
+SmartClip is a private, local-first Android video editor. After selecting and trimming a local video, the vertical editor provides a safe 9:16 preview, normalized gameplay/facecam crop regions, Smart Crop, Fit with Background, Split, and Manual Overlay controls. Crop and preset calculations also run in a browser for UI testing, but browser export is intentionally unavailable and never calls a backend. The current Android renderer supports Smart Crop and Fit with a solid background; blur and facecam compositing remain preview-only and return an explicit unsupported-layout error rather than a false-success export.
+
+## Vertical output
+
+- **Auto, 720p, and 1080p:** Auto chooses 1080×1920 only for sufficiently detailed sources/capable devices; otherwise it uses 720×1280. Explicit upscaling displays a warning.
+- **Android-only render:** AndroidX Media3 Transformer decodes, applies GPU effects, and hardware-encodes H.264 while retaining audio. Results are published as MP4 to `Movies/SmartClip` through scoped MediaStore.
+- **Local operation:** no cloud, AI, face detection, broad storage permission, or paid service is involved. Rendering needs temporary free space and may be thermally throttled; codec support is device-dependent.
+
+See [the Android architecture](docs/android-architecture.md) for the crop coordinate model, pipeline, dependencies, limitations, and lifecycle behavior. Automatic highlight candidate generation is the next product step; it is not part of the composition editor.
+
 SmartClip is migrating from a server-backed web application to a private, Android local-first video highlight application. The goal is fully on-device processing without paid or AI APIs, cloud processing, or a runtime server requirement.
 
-> **Current status:** Android can select a local video, set a manual range, stream-copy supported media into a local MP4, and save it to the gallery entirely on-device. Automatic highlights and composition are not implemented.
+> **Current status:** Android can select a local video, set a manual range, stream-copy supported media into a local MP4, and save it to the gallery entirely on-device. Smart Crop and solid-background vertical composition are implemented; automatic highlights and facecam compositing are not.
 
 ## Architecture
 

@@ -12,6 +12,7 @@ import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.StatFs;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import androidx.activity.result.ActivityResult;
@@ -32,11 +33,25 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.ArrayList;
+import java.util.Collections;
+import androidx.media3.common.Effect;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.MimeTypes;
+import androidx.media3.effect.Crop;
+import androidx.media3.effect.Presentation;
+import androidx.media3.transformer.EditedMediaItem;
+import androidx.media3.transformer.Effects;
+import androidx.media3.transformer.ExportException;
+import androidx.media3.transformer.ExportResult;
+import androidx.media3.transformer.Transformer;
+import org.json.JSONObject;
 
 @CapacitorPlugin(name = "LocalVideoPicker")
 public class LocalVideoPickerPlugin extends Plugin {
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
     private final ExecutorService exportExecutor = Executors.newSingleThreadExecutor();
+    private Transformer compositionTransformer;
 
     @PluginMethod
     public void chooseVideo(PluginCall call) {
@@ -105,6 +120,75 @@ public class LocalVideoPickerPlugin extends Plugin {
         } catch (RejectedExecutionException error) {
             call.reject("The editor is shutting down.", "EDITOR_UNAVAILABLE", error);
         }
+    }
+
+    /** Hardware-accelerated decode/effect/encode path. Unlike exportClip, composition cannot stream-copy. */
+    @PluginMethod
+    public void exportComposition(PluginCall call) {
+        String source = call.getString("uri"); Long startMs = call.getLong("startMs"); Long endMs = call.getLong("endMs");
+        Integer width = call.getInt("outputWidth"); Integer height = call.getInt("outputHeight"); JSObject layout = call.getObject("layout");
+        if (source == null || startMs == null || endMs == null || width == null || height == null || layout == null ||
+            startMs < 0 || endMs - startMs < 1000 || !((width == 720 && height == 1280) || (width == 1080 && height == 1920))) {
+            call.reject("Invalid composition settings.", "INVALID_LAYOUT"); return;
+        }
+        JSONObject crop = layout.optJSONObject("gameplayCrop");
+        if (!validRect(crop)) { call.reject("Gameplay crop must be a non-zero region inside the source.", "INVALID_CROP"); return; }
+        String mode = layout.getString("mode", "smart-crop");
+        if (!"smart-crop".equals(mode) && !"fit-background".equals(mode)) {
+            call.reject("Split and manual facecam composition are not yet supported by the Android renderer.", "UNSUPPORTED_LAYOUT"); return;
+        }
+        long estimated = (long) width * height * Math.max(1, endMs - startMs) / 1000;
+        if (new StatFs(getContext().getCacheDir().getAbsolutePath()).getAvailableBytes() < Math.max(150_000_000L, estimated)) {
+            call.reject("Insufficient storage for a local composition.", "INSUFFICIENT_STORAGE"); return;
+        }
+        cancelled.set(false); progress("preparing", null);
+        File temporary;
+        try { temporary = File.createTempFile("smartclip-vertical-", ".mp4", getContext().getCacheDir()); temporary.delete(); }
+        catch (Exception error) { call.reject("Unable to prepare local output storage.", "INSUFFICIENT_STORAGE", error); return; }
+        MediaItem item = new MediaItem.Builder().setUri(Uri.parse(source)).setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(startMs).setEndPositionMs(endMs).build()).build();
+        ArrayList<Effect> videoEffects = new ArrayList<>();
+        // Crop uses normalized device coordinates. Presentation performs scale-to-fit/crop without stretching.
+        if (!"fit-background".equals(mode)) videoEffects.add(new Crop((float)(crop.optDouble("x") * 2 - 1), (float)((crop.optDouble("x") + crop.optDouble("width")) * 2 - 1), (float)(1 - (crop.optDouble("y") + crop.optDouble("height")) * 2), (float)(1 - crop.optDouble("y") * 2)));
+        int presentationLayout = "fit-background".equals(mode) ? Presentation.LAYOUT_SCALE_TO_FIT : Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP;
+        videoEffects.add(Presentation.createForWidthAndHeight(width, height, presentationLayout));
+        EditedMediaItem edited = new EditedMediaItem.Builder(item).setEffects(new Effects(Collections.emptyList(), videoEffects)).build();
+        Transformer.Listener listener = new Transformer.Listener() {
+            @Override public void onCompleted(androidx.media3.transformer.Composition composition, ExportResult exportResult) {
+                compositionTransformer = null; if (cancelled.get()) { temporary.delete(); call.reject("Export cancelled.", "CANCELLED"); return; }
+                progress("saving", 0); exportExecutor.execute(() -> publishComposition(call, temporary, endMs - startMs, width, height));
+            }
+            @Override public void onError(androidx.media3.transformer.Composition composition, ExportResult exportResult, ExportException error) {
+                compositionTransformer = null; temporary.delete();
+                if (cancelled.get()) call.reject("Export cancelled.", "CANCELLED");
+                else call.reject(error.errorCode == ExportException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ? "The source codec is unsupported by this device." : "Local rendering failed. The device may be low on memory or not support this codec.", "RENDER_FAILED", error);
+            }
+        };
+        compositionTransformer = new Transformer.Builder(getContext()).setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC).addListener(listener).build();
+        progress("rendering", 0);
+        try { compositionTransformer.start(edited, temporary.getAbsolutePath()); }
+        catch (SecurityException error) { temporary.delete(); call.reject("The selected source is no longer accessible.", "SOURCE_INACCESSIBLE", error); }
+        catch (RuntimeException error) { temporary.delete(); call.reject("The device could not start the local encoder.", "ENCODER_UNAVAILABLE", error); }
+    }
+
+    private boolean validRect(JSONObject rect) {
+        if (rect == null) return false;
+        double x=rect.optDouble("x", Double.NaN), y=rect.optDouble("y", Double.NaN), w=rect.optDouble("width", Double.NaN), h=rect.optDouble("height", Double.NaN);
+        return Double.isFinite(x) && Double.isFinite(y) && Double.isFinite(w) && Double.isFinite(h) && x >= 0 && y >= 0 && w >= .02 && h >= .02 && x+w <= 1.000001 && y+h <= 1.000001;
+    }
+
+    private void publishComposition(PluginCall call, File temporary, long durationMs, int width, int height) {
+        Uri output = null;
+        try {
+            checkCancelled(); String filename = "SmartClip_Vertical_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date()) + ".mp4";
+            ContentValues values = new ContentValues(); values.put(MediaStore.Video.Media.DISPLAY_NAME, filename); values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4"); values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/SmartClip"); values.put(MediaStore.Video.Media.IS_PENDING, 1);
+            output=getContext().getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,values); if(output==null)throw new IllegalStateException("Android could not create the gallery item.");
+            long total=temporary.length(),copied=0;byte[] buffer=new byte[256*1024];int count;
+            try(FileInputStream input=new FileInputStream(temporary);OutputStream out=getContext().getContentResolver().openOutputStream(output)){if(out==null)throw new IllegalStateException("Gallery output is inaccessible.");while((count=input.read(buffer))!=-1){checkCancelled();out.write(buffer,0,count);copied+=count;progress("saving",total==0?null:(int)(copied*100/total));}}
+            values.clear();values.put(MediaStore.Video.Media.IS_PENDING,0);getContext().getContentResolver().update(output,values,null,null);progress("completed",100);
+            JSObject result=new JSObject();result.put("filename",filename);result.put("duration",durationMs/1000.0);result.put("fileSize",total);result.put("uri",output.toString());result.put("location","Movies/SmartClip");result.put("width",width);result.put("height",height);call.resolve(result);
+        } catch(InterruptedException error){if(output!=null)getContext().getContentResolver().delete(output,null,null);call.reject("Export cancelled.","CANCELLED");}
+        catch(Exception error){if(output!=null)getContext().getContentResolver().delete(output,null,null);call.reject("Saving failed. Check available storage.","SAVE_FAILED",error);}
+        finally{temporary.delete();}
     }
 
     private void runExport(PluginCall call, String source, long startMs, long endMs) {
@@ -178,6 +262,7 @@ public class LocalVideoPickerPlugin extends Plugin {
     @PluginMethod
     public void cancelExport(PluginCall call) {
         cancelled.set(true);
+        if (compositionTransformer != null) { compositionTransformer.cancel(); compositionTransformer = null; }
         call.resolve();
     }
 
