@@ -153,3 +153,11 @@ Frontend builds map `SMARTCLIP_BACKEND_URL` and `SMARTCLIP_API_TOKEN` to `VITE_S
 Render Free can take about a minute to wake. Inspection uses a long timeout and offers Retry; polling begins near two seconds and backs off. Jobs and results are temporary, normally expire after 30 minutes, and can disappear on sleep, restart, or redeploy. Supported sources are public, non-login, non-DRM URLs accepted by the deployed yt-dlp version. Private, login-required, DRM-protected, unavailable, and unsupported sources are intentionally rejected.
 
 Android result downloads stream over authenticated HTTPS in the native plugin directly into an `IS_PENDING` MediaStore item at `Movies/SmartClip`, then publish it after a successful copy. They do not buffer an MP4 in JavaScript. Filenames are sanitized, MediaStore safely resolves collisions, multi-downloads run sequentially, partial items are removed on failure/cancellation, and Open/Share use the resulting `content://` URI. The only added manifest permission is `android.permission.INTERNET`; no storage permission or cleartext traffic is enabled. The next product step remains the complete UI redesign.
+
+## Languages
+
+SmartClip supports **Bahasa Indonesia** and **English**. Bahasa Indonesia is the default when no preference exists. In **Ikuti bahasa sistem / Follow System** mode, an Indonesian Android or browser locale selects Indonesian; every other locale selects English. The interface changes immediately without an app restart.
+
+Only the selected mode (`id`, `en`, or `system`) is stored in browser/WebView `localStorage` under `smartclip.language`. Credentials, authorization headers, and backend-private data are never stored by localization. Android WebView exposes the Android locale through the standard browser locale API and requires no permission.
+
+To add a language, extend `Locale` and `LanguageMode`, add a complete typed dictionary in `frontend/src/i18n.tsx`, update `resolveLocale`, and add the choice to `SettingsScreen`. Keep dynamic filenames, titles, URLs, job IDs, and backend metadata values outside translation calls.

@@ -42,6 +42,7 @@ import {
   type TrimRange,
 } from "@/lib/trim";
 import { AppShell, type Destination, EmptyState, StatusBadge } from "@/components/AppShell";
+import { useI18n } from "@/i18n";
 import { DownloadsScreen, ProjectsScreen, SettingsScreen, readStored, type DownloadItem, type HistoryItem } from "@/components/LibraryScreens";
 
 const formatBytes = (bytes: number) =>
@@ -54,6 +55,7 @@ const formatDuration = (seconds: number) =>
     .padStart(2, "0")}`;
 
 export default function App() {
+  const { t, locale } = useI18n();
   const input = useRef<HTMLInputElement>(null);
   const [sourceMode, setSourceMode] = useState<"local" | "url">("local");
   const [video, setVideo] = useState<LocalVideoMetadata | null>(null);
@@ -241,21 +243,21 @@ export default function App() {
   const clearHistory = () => { localStorage.removeItem("smartclip.history"); setHistory([]); };
   const deleteDownload = (id: string) => setDownloads((old) => { const next = old.filter(x => x.id !== id); localStorage.setItem("smartclip.downloads", JSON.stringify(next)); return next; });
 
-  if (destination !== "home") return <AppShell destination={destination} onNavigate={setDestination} title={destination[0].toUpperCase() + destination.slice(1)}>{destination === "projects" ? <ProjectsScreen items={history} onClear={clearHistory}/> : destination === "downloads" ? <DownloadsScreen items={downloads} onDelete={deleteDownload}/> : <SettingsScreen/>}</AppShell>;
+  if (destination !== "home") return <AppShell destination={destination} onNavigate={setDestination} title={t(destination)}>{destination === "projects" ? <ProjectsScreen items={history} onClear={clearHistory}/> : destination === "downloads" ? <DownloadsScreen items={downloads} onDelete={deleteDownload}/> : <SettingsScreen/>}</AppShell>;
 
   return (
-    <AppShell destination={destination} onNavigate={setDestination} title={video ? "Local editor" : "Home"}>
+    <AppShell destination={destination} onNavigate={setDestination} title={video ? t("localEditor") : t("home")}>
       <section className="mx-auto max-w-3xl text-left">
-        <header className="dashboard-header"><p>CREATE A CLIP</p><h1>SmartClip</h1><span>Turn long videos into focused short clips.</span></header>
+        <header className="dashboard-header"><p>{t("createClip")}</p><h1>SmartClip</h1><span>{t("homeDetail")}</span></header>
         <div aria-label="Source mode" className="source-grid">
-          <button className={`rounded-2xl border p-4 ${sourceMode === "local" ? "border-violet-400 bg-violet-400/10" : "border-white/10 bg-white/[.04]"}`} onClick={() => setSourceMode("local")}><strong>From Device</strong><span className="mt-1 block text-xs text-muted-foreground">Private, processed locally</span></button>
-          <button className={`rounded-2xl border p-4 ${sourceMode === "url" ? "border-violet-400 bg-violet-400/10" : "border-white/10 bg-white/[.04]"}`} onClick={() => setSourceMode("url")}><strong>Paste URL</strong><span className="mt-1 block text-xs text-muted-foreground">Processed through the private SmartClip server</span></button>
+          <button className={`rounded-2xl border p-4 ${sourceMode === "local" ? "border-violet-400 bg-violet-400/10" : "border-white/10 bg-white/[.04]"}`} onClick={() => setSourceMode("local")}><strong>{t("fromDevice")}</strong><span className="mt-1 block text-xs text-muted-foreground">{t("localPrivate")}</span></button>
+          <button className={`rounded-2xl border p-4 ${sourceMode === "url" ? "border-violet-400 bg-violet-400/10" : "border-white/10 bg-white/[.04]"}`} onClick={() => setSourceMode("url")}><strong>{t("pasteUrl")}</strong><span className="mt-1 block text-xs text-muted-foreground">{t("serverPrivate")}</span></button>
         </div>
         <div className="workflow-card">
           {sourceMode === "url" ? <UrlWorkflow /> : !video ? (
             <div className="rounded-2xl border border-dashed border-violet-400/40 bg-black/20 px-5 py-14">
               <input
-                aria-label="Choose a video file"
+                aria-label={t("chooseFile")}
                 ref={input}
                 className="sr-only"
                 type="file"
@@ -266,7 +268,7 @@ export default function App() {
                 <Upload />
               </span>
               <h2 className="mt-5 text-xl font-semibold">
-                Select one local video
+                {t("selectVideo")}
               </h2>
               <p className="mt-2 text-sm text-muted-foreground">
                 MP4, MOV, MKV, or WEBM
@@ -284,7 +286,7 @@ export default function App() {
                     metadata…
                   </>
                 ) : (
-                  "Choose Video"
+                  t("chooseVideo")
                 )}
               </Button>
               <p className="mx-auto mt-4 max-w-md text-xs text-muted-foreground">
@@ -304,12 +306,12 @@ export default function App() {
                     {video.filename}
                   </h2>
                   <p className="text-sm text-emerald-300">
-                    Metadata ready • {video.source}
+                    {t("metadataReady")} • {video.source}
                   </p>
                 </div>
                 <Button variant="outline" disabled={busy} onClick={remove}>
                   <Trash2 size={16} />
-                  Remove Video
+                  {t("removeVideo")}
                 </Button>
               </div>
               <dl className="grid grid-cols-2 gap-3 py-5 sm:grid-cols-4">
@@ -339,7 +341,7 @@ export default function App() {
                 className="rounded-2xl border border-white/10 bg-black/20 p-4 sm:p-5"
               >
                 <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Trim editor</h3>
+                  <h3 className="font-semibold">{t("trimEditor")}</h3>
                   <Button
                     variant="outline"
                     disabled={busy}
@@ -427,7 +429,7 @@ export default function App() {
                     onClick={exportClip}
                   >
                     <Scissors size={17} />
-                    Export Clip
+                    {t("exportClip")}
                   </Button>
                   {busy && (
                     <Button
@@ -482,7 +484,7 @@ export default function App() {
                   onClick={exportVertical}
                 >
                   <FileVideo size={17} />
-                  Export Vertical MP4
+                  {t("exportVertical")}
                 </Button>
                 <span className="self-center text-xs text-muted-foreground">
                   Composition re-encodes locally; trim-only export remains
@@ -493,11 +495,11 @@ export default function App() {
                 <section className="completion-enter mt-5 rounded-2xl border border-emerald-400/20 bg-emerald-400/[.07] p-5">
                   <h3 className="flex items-center gap-2 font-semibold text-emerald-300">
                     <CircleCheck size={19} />
-                    Export completed
+                    {t("exportCompleted")}
                   </h3>
                   <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <dt className="text-muted-foreground">Filename</dt>
+                      <dt className="text-muted-foreground">{t("filename")}</dt>
                       <dd className="break-all">{result.filename}</dd>
                     </div>
                     <div>
@@ -517,7 +519,7 @@ export default function App() {
                       <dd>{formatBytes(result.fileSize)}</dd>
                     </div>
                     <div>
-                      <dt className="text-muted-foreground">Saved to</dt>
+                      <dt className="text-muted-foreground">{t("savedTo")}</dt>
                       <dd>{result.location}</dd>
                     </div>
                   </dl>
@@ -561,7 +563,7 @@ export default function App() {
       <section className="mx-auto mt-6 max-w-3xl surface-card p-5">
         <div className="flex items-center gap-3">
           <Info className="text-violet-300" size={20} />
-          <h2 className="font-semibold">Local-first status</h2>
+          <h2 className="font-semibold">{t("localStatus")}</h2>
         </div>
         <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
           {[
@@ -584,7 +586,7 @@ export default function App() {
           ))}
         </dl>
       </section>
-      {!video && sourceMode === "local" && <section className="mx-auto mt-6 max-w-3xl"><div className="section-heading"><h2>Recent activity</h2><button onClick={() => setDestination("projects")}>View all</button></div>{history.length ? <div className="card-list">{history.slice(0,3).map(item => <article className="library-card" key={item.id}><div className="min-w-0 flex-1"><h3 className="truncate">{item.title}</h3><p>{item.source} · {new Date(item.date).toLocaleDateString()} · Last action: video selected</p></div><StatusBadge tone="neutral">Draft</StatusBadge></article>)}</div> : <EmptyState title="No recent activity" detail="Choose a video or inspect a URL to begin."/>}</section>}
+      {!video && sourceMode === "local" && <section className="mx-auto mt-6 max-w-3xl"><div className="section-heading"><h2>{t("recentActivity")}</h2><button onClick={() => setDestination("projects")}>{t("viewAll")}</button></div>{history.length ? <div className="card-list">{history.slice(0,3).map(item => <article className="library-card" key={item.id}><div className="min-w-0 flex-1"><h3 className="truncate">{item.title}</h3><p>{item.source} · {new Date(item.date).toLocaleDateString(locale)} · Last action: video selected</p></div><StatusBadge tone="neutral">Draft</StatusBadge></article>)}</div> : <EmptyState title={t("noRecent")} detail={t("noRecentDetail")}/>}</section>}
     </AppShell>
   );
 }
