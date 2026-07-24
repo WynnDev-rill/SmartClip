@@ -27,6 +27,9 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -59,6 +62,9 @@ public class LocalVideoPickerPlugin extends Plugin {
     private static final int ANALYSIS_FRAME_HEIGHT = 18;
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
     private final AtomicBoolean analysisCancelled = new AtomicBoolean(false);
+    private final AtomicBoolean downloadCancelled = new AtomicBoolean(false);
+    private final ExecutorService downloadExecutor = Executors.newSingleThreadExecutor();
+    private volatile HttpURLConnection activeDownload;
     private final ExecutorService exportExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService analysisExecutor = Executors.newSingleThreadExecutor();
     private Transformer compositionTransformer;
@@ -492,6 +498,7 @@ public class LocalVideoPickerPlugin extends Plugin {
         cancelled.set(true);
         exportExecutor.shutdownNow();
         analysisCancelled.set(true); analysisExecutor.shutdownNow();
+        downloadCancelled.set(true); if (activeDownload != null) activeDownload.disconnect(); downloadExecutor.shutdownNow();
         super.handleOnDestroy();
     }
 
@@ -501,6 +508,27 @@ public class LocalVideoPickerPlugin extends Plugin {
         if (compositionTransformer != null) { compositionTransformer.cancel(); compositionTransformer = null; }
         call.resolve();
     }
+
+    @PluginMethod
+    public void downloadUrlVideo(PluginCall call) {
+        String url = call.getString("url"), token = call.getString("token"), requestedName = call.getString("filename");
+        if (url == null || !url.startsWith("https://") || token == null || token.isEmpty()) { call.reject("The authenticated HTTPS download is not configured.", "DOWNLOAD_CONFIG"); return; }
+        String safeName = sanitizeDownloadName(requestedName); downloadCancelled.set(false);
+        try { downloadExecutor.execute(() -> runUrlDownload(call, url, token, safeName)); } catch (RejectedExecutionException error) { call.reject("The downloader is unavailable.", "DOWNLOAD_UNAVAILABLE", error); }
+    }
+    private String sanitizeDownloadName(String value) { String name = value == null ? "SmartClip.mp4" : value.replaceAll("[^A-Za-z0-9._-]", "_"); if (!name.toLowerCase(Locale.US).endsWith(".mp4")) name += ".mp4"; if (name.length() > 100) name = name.substring(0, 96) + ".mp4"; return name; }
+    private void runUrlDownload(PluginCall call, String url, String token, String filename) {
+        Uri output = null; HttpURLConnection connection = null;
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) throw new UnsupportedOperationException("Downloads require Android 10 or newer.");
+            connection = (HttpURLConnection) new URL(url).openConnection(); activeDownload = connection; connection.setInstanceFollowRedirects(false); connection.setConnectTimeout(60_000); connection.setReadTimeout(120_000); connection.setRequestProperty("Authorization", "Bearer " + token); connection.setRequestProperty("Accept", "video/mp4");
+            int status = connection.getResponseCode(); if (status != 200) throw new IOException(status == 401 ? "Server authentication failed." : status == 410 ? "The temporary clip has expired." : "Download server returned HTTP " + status + "."); long total = connection.getContentLengthLong();
+            ContentValues values = new ContentValues(); values.put(MediaStore.Video.Media.DISPLAY_NAME, filename); values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4"); values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/SmartClip"); values.put(MediaStore.Video.Media.IS_PENDING, 1); output = getContext().getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values); if (output == null) throw new IOException("Android could not create the gallery item.");
+            long copied = 0; byte[] buffer = new byte[256 * 1024]; int count; try (InputStream input = connection.getInputStream(); OutputStream out = getContext().getContentResolver().openOutputStream(output)) { if (out == null) throw new IOException("Gallery output is inaccessible."); while ((count = input.read(buffer)) != -1) { if (downloadCancelled.get()) throw new InterruptedException(); out.write(buffer, 0, count); copied += count; JSObject event = new JSObject(); event.put("filename", filename); if (total > 0) event.put("progress", (int)(copied * 100 / total)); notifyListeners("downloadProgress", event); } }
+            values.clear(); values.put(MediaStore.Video.Media.IS_PENDING, 0); getContext().getContentResolver().update(output, values, null, null); JSObject result = new JSObject(); result.put("filename", filename); result.put("fileSize", copied); result.put("uri", output.toString()); result.put("location", "Movies/SmartClip"); call.resolve(result);
+        } catch (InterruptedException error) { if (output != null) getContext().getContentResolver().delete(output, null, null); call.reject("Download cancelled.", "CANCELLED"); } catch (Exception error) { if (output != null) getContext().getContentResolver().delete(output, null, null); call.reject(error.getMessage() == null ? "Download or MediaStore save failed. Check storage and retry." : error.getMessage(), "DOWNLOAD_FAILED", error); } finally { activeDownload = null; if (connection != null) connection.disconnect(); }
+    }
+    @PluginMethod public void cancelDownload(PluginCall call) { downloadCancelled.set(true); HttpURLConnection connection = activeDownload; if (connection != null) connection.disconnect(); call.resolve(); }
 
     @PluginMethod
     public void openMedia(PluginCall call) {

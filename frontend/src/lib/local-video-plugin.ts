@@ -27,6 +27,8 @@ export interface LocalVideoPlugin {
     availability: { audio: boolean; motion: boolean; scene: boolean };
   }>;
   cancelAnalysis(): Promise<void>;
+  downloadUrlVideo(options: { url: string; token: string; filename: string }): Promise<{ filename: string; fileSize: number; uri: string; location: string }>;
+  cancelDownload(): Promise<void>;
   openMedia(options: { uri: string }): Promise<void>;
   shareMedia(options: { uri: string; filename: string }): Promise<void>;
   addListener(

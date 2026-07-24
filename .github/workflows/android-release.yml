@@ -20,6 +20,8 @@ jobs:
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      VITE_SMARTCLIP_BACKEND_URL: ${{ secrets.SMARTCLIP_BACKEND_URL }}
+      VITE_SMARTCLIP_API_TOKEN: ${{ secrets.SMARTCLIP_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 

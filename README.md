@@ -141,3 +141,13 @@ pytest
 Metadata availability depends on the provider and platform codec support. Stream copy is limited to H.264/AAC and sync-sample start precision. Browser trim controls are a development convenience and never fake an export. The authenticated URL backend remains separate and is not called by this UI.
 
 The next backend product step is explicit APK URL-job integration without changing the local-video path.
+
+## Local and URL source modes
+
+The source selector deliberately keeps two isolated pipelines. **From Device** retains the Android system picker, local metadata, trim, deterministic highlights, 9:16 composition, and MediaStore export; its `content://` URI never enters a network request. **Paste URL** sends only a supported public HTTP(S) URL to the private Render service at `SMARTCLIP_BACKEND_URL` (default `https://smartclip-url-service.onrender.com`), then inspects, creates and polls a temporary job, lists candidates, and downloads chosen files with authentication. No AI service or AI key is used.
+
+Frontend builds map `SMARTCLIP_BACKEND_URL` and `SMARTCLIP_API_TOKEN` to `VITE_SMARTCLIP_BACKEND_URL` and `VITE_SMARTCLIP_API_TOKEN`. Set the two unprefixed names as GitHub Actions repository secrets; workflows expose them only to Vite and never echo them. For local browser UI work copy `frontend/.env.example` to an ignored `.env.local` and supply a real private token. An absent/placeholder token disables URL calls with a clear configuration message. Never ship a public web build containing this private token; this integration is personal-use APK infrastructure.
+
+Render Free can take about a minute to wake. Inspection uses a long timeout and offers Retry; polling begins near two seconds and backs off. Jobs and results are temporary, normally expire after 30 minutes, and can disappear on sleep, restart, or redeploy. Supported sources are public, non-login, non-DRM URLs accepted by the deployed yt-dlp version. Private, login-required, DRM-protected, unavailable, and unsupported sources are intentionally rejected.
+
+Android result downloads stream over authenticated HTTPS in the native plugin directly into an `IS_PENDING` MediaStore item at `Movies/SmartClip`, then publish it after a successful copy. They do not buffer an MP4 in JavaScript. Filenames are sanitized, MediaStore safely resolves collisions, multi-downloads run sequentially, partial items are removed on failure/cancellation, and Open/Share use the resulting `content://` URI. The only added manifest permission is `android.permission.INTERNET`; no storage permission or cleartext traffic is enabled. The next product step remains the complete UI redesign.
