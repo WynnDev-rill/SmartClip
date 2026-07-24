@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -23,7 +23,17 @@ describe("local video selection", () => {
     render(<App />);
     await userEvent.upload(screen.getByLabelText("Choose a video file"), new File(["x"], "holiday.mp4", { type: "video/mp4" }));
     expect(await screen.findByText("holiday.mp4")).toBeInTheDocument();
-    for (const value of ["1:05", "1920 px", "1080 px", "Full HD (1080p)", "Landscape", "video/mp4", "content://media/42"]) expect(screen.getByText(value)).toBeInTheDocument();
+    const expectMetadata = (label: string, value: string) => {
+      const term = screen.getByText(label, { selector: "dt" });
+      expect(within(term.parentElement!).getByText(value, { selector: "dd" })).toBeInTheDocument();
+    };
+    expectMetadata("Duration", "1:05");
+    expectMetadata("Width", "1920 px");
+    expectMetadata("Height", "1080 px");
+    expectMetadata("Resolution", "Full HD (1080p)");
+    expectMetadata("Orientation", "Landscape");
+    expectMetadata("MIME type", "video/mp4");
+    expectMetadata("Local URI", "content://media/42");
   });
 
   it("shows an unsupported file error", async () => {

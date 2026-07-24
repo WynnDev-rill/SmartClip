@@ -1,4 +1,4 @@
-import { registerPlugin } from "@capacitor/core";
+import { LocalVideoPlugin } from "./local-video-plugin";
 
 export const MIN_CLIP_DURATION = 1;
 
@@ -7,15 +7,7 @@ export type ExportState = "idle" | "preparing" | "trimming" | "saving" | "comple
 export type ExportResult = { filename: string; duration: number; fileSize: number; uri: string; location: string };
 export type ExportProgress = { state: Exclude<ExportState, "idle" | "failed" | "cancelled">; progress?: number };
 
-interface LocalVideoPickerPlugin {
-  exportClip(options: { uri: string; startMs: number; endMs: number }): Promise<ExportResult>;
-  cancelExport(): Promise<void>;
-  openMedia(options: { uri: string }): Promise<void>;
-  shareMedia(options: { uri: string; filename: string }): Promise<void>;
-  addListener(event: "exportProgress", callback: (event: ExportProgress) => void): Promise<{ remove(): Promise<void> }>;
-}
-
-export const NativeEditor = registerPlugin<LocalVideoPickerPlugin>("LocalVideoPicker");
+export const NativeEditor = LocalVideoPlugin;
 
 export function validateTrim(range: TrimRange, sourceDuration: number): string | null {
   if (!Number.isFinite(range.start) || !Number.isFinite(range.end) || range.start < 0 || range.end > sourceDuration || range.end <= range.start) return "Choose a start and end within the source duration.";
