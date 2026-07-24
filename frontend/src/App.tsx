@@ -41,6 +41,8 @@ import {
   type ExportState,
   type TrimRange,
 } from "@/lib/trim";
+import { AppShell, type Destination, EmptyState, StatusBadge } from "@/components/AppShell";
+import { DownloadsScreen, ProjectsScreen, SettingsScreen, readStored, type DownloadItem, type HistoryItem } from "@/components/LibraryScreens";
 
 const formatBytes = (bytes: number) =>
   bytes < 1024 * 1024
@@ -63,6 +65,9 @@ export default function App() {
   const [state, setState] = useState<ExportState>("idle");
   const [progress, setProgress] = useState<number>();
   const [result, setResult] = useState<ExportResult>();
+  const [destination, setDestination] = useState<Destination>("home");
+  const [history, setHistory] = useState<HistoryItem[]>(() => readStored("smartclip.history"));
+  const [downloads, setDownloads] = useState<DownloadItem[]>(() => readStored("smartclip.downloads"));
   const native = isNativeAndroid();
   const runSelection = async (file?: File) => {
     setError("");
@@ -79,6 +84,8 @@ export default function App() {
         setRange({ start: 0, end: selected.duration });
         setResult(undefined);
         setState("idle");
+        const item: HistoryItem = { id: `${Date.now()}`, title: selected.filename, source: "Device", status: "cancelled", date: new Date().toISOString() };
+        setHistory((old) => { const next = [item, ...old].slice(0, 30); localStorage.setItem("smartclip.history", JSON.stringify(next)); return next; });
       }
     } catch (reason) {
       const message =
@@ -150,6 +157,8 @@ export default function App() {
       setResult(exported);
       setState("completed");
       setProgress(100);
+      const item: DownloadItem = { id: exported.uri, filename: exported.filename, date: new Date().toISOString(), size: formatBytes(exported.fileSize), source: "Device", uri: exported.uri };
+      setDownloads((old) => { const next = [item, ...old.filter(x => x.id !== item.id)]; localStorage.setItem("smartclip.downloads", JSON.stringify(next)); return next; });
     } catch (reason) {
       const message =
         reason instanceof Error ? reason.message : "Local export failed.";
@@ -229,34 +238,20 @@ export default function App() {
   const busy = ["preparing", "trimming", "rendering", "saving"].includes(state);
   const validation = video ? validateTrim(range, video.duration) : null;
 
+  const clearHistory = () => { localStorage.removeItem("smartclip.history"); setHistory([]); };
+  const deleteDownload = (id: string) => setDownloads((old) => { const next = old.filter(x => x.id !== id); localStorage.setItem("smartclip.downloads", JSON.stringify(next)); return next; });
+
+  if (destination !== "home") return <AppShell destination={destination} onNavigate={setDestination} title={destination[0].toUpperCase() + destination.slice(1)}>{destination === "projects" ? <ProjectsScreen items={history} onClear={clearHistory}/> : destination === "downloads" ? <DownloadsScreen items={downloads} onDelete={deleteDownload}/> : <SettingsScreen/>}</AppShell>;
+
   return (
-    <main className="min-h-screen px-5 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(2rem,env(safe-area-inset-top))] sm:px-8">
-      <nav className="mx-auto flex max-w-5xl items-center gap-3">
-        <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary">
-          <Scissors size={20} />
-        </span>
-        <div>
-          <p className="font-semibold">SmartClip</p>
-          <p className="text-xs text-muted-foreground">
-            Private, on-device workspace
-          </p>
-        </div>
-      </nav>
-      <section className="mx-auto mt-12 max-w-3xl text-center">
-        <p className="text-sm font-medium text-violet-400">
-          PRIVATE • FAST • LOCAL
-        </p>
-        <h1 className="mt-4 text-4xl font-semibold tracking-tight sm:text-6xl">
-          Trim your moment.
-        </h1>
-        <p className="mx-auto mt-5 max-w-xl text-muted-foreground">
-          Select, trim, and save an MP4 without uploading your video.
-        </p>
-        <div aria-label="Source mode" className="mx-auto mt-8 grid max-w-xl grid-cols-2 gap-3 text-left">
+    <AppShell destination={destination} onNavigate={setDestination} title={video ? "Local editor" : "Home"}>
+      <section className="mx-auto max-w-3xl text-left">
+        <header className="dashboard-header"><p>CREATE A CLIP</p><h1>SmartClip</h1><span>Turn long videos into focused short clips.</span></header>
+        <div aria-label="Source mode" className="source-grid">
           <button className={`rounded-2xl border p-4 ${sourceMode === "local" ? "border-violet-400 bg-violet-400/10" : "border-white/10 bg-white/[.04]"}`} onClick={() => setSourceMode("local")}><strong>From Device</strong><span className="mt-1 block text-xs text-muted-foreground">Private, processed locally</span></button>
           <button className={`rounded-2xl border p-4 ${sourceMode === "url" ? "border-violet-400 bg-violet-400/10" : "border-white/10 bg-white/[.04]"}`} onClick={() => setSourceMode("url")}><strong>Paste URL</strong><span className="mt-1 block text-xs text-muted-foreground">Processed through the private SmartClip server</span></button>
         </div>
-        <div className="mt-5 rounded-3xl border border-white/10 bg-white/[.04] p-4 shadow-2xl sm:p-7">
+        <div className="workflow-card">
           {sourceMode === "url" ? <UrlWorkflow /> : !video ? (
             <div className="rounded-2xl border border-dashed border-violet-400/40 bg-black/20 px-5 py-14">
               <input
@@ -563,7 +558,7 @@ export default function App() {
           )}
         </div>
       </section>
-      <section className="mx-auto mt-8 max-w-3xl rounded-3xl border border-white/10 bg-white/[.04] p-5">
+      <section className="mx-auto mt-6 max-w-3xl surface-card p-5">
         <div className="flex items-center gap-3">
           <Info className="text-violet-300" size={20} />
           <h2 className="font-semibold">Local-first status</h2>
@@ -589,6 +584,7 @@ export default function App() {
           ))}
         </dl>
       </section>
-    </main>
+      {!video && sourceMode === "local" && <section className="mx-auto mt-6 max-w-3xl"><div className="section-heading"><h2>Recent activity</h2><button onClick={() => setDestination("projects")}>View all</button></div>{history.length ? <div className="card-list">{history.slice(0,3).map(item => <article className="library-card" key={item.id}><div className="min-w-0 flex-1"><h3 className="truncate">{item.title}</h3><p>{item.source} · {new Date(item.date).toLocaleDateString()} · Last action: video selected</p></div><StatusBadge tone="neutral">Draft</StatusBadge></article>)}</div> : <EmptyState title="No recent activity" detail="Choose a video or inspect a URL to begin."/>}</section>}
+    </AppShell>
   );
 }

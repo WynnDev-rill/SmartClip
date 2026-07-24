@@ -38,3 +38,6 @@ Render Blueprint settings are in `render.yaml`: Docker Web Service, `main`, Free
 ## Android client integration
 
 The APK's opt-in URL workflow uses `POST /api/url/inspect`, `POST /api/jobs`, `GET /api/jobs/{job_id}`, `POST /api/jobs/{job_id}/cancel`, `GET /api/jobs/{job_id}/results`, and authenticated `GET /api/files/{job_id}/{filename}`. A typed frontend client centralizes bearer authentication, timeouts, aborts, parsing, and safe user-facing errors. The non-sensitive active job ID is session-persisted for activity recreation; the token is build-time-only and is never placed in local/session storage. Candidate downloads stream in native Android code to scoped MediaStore under `Movies/SmartClip`.
+# Mobile UI boundary
+
+URL inspection and temporary job processing are presented inside the dedicated URL workflow. Navigation/history records never contain the API token, authorization headers, or raw private responses. The UI redesign does not change endpoint paths, authentication, polling, expiry, or download behavior. See [UI architecture](ui-architecture.md).
