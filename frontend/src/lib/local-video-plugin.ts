@@ -22,11 +22,20 @@ export interface LocalVideoPlugin {
     filename: string; duration: number; fileSize: number; uri: string; location: string; width: number; height: number;
   }>;
   cancelExport(): Promise<void>;
+  analyzeVideo(options: { uri: string; intervalMs?: number; maxDurationMs?: number }): Promise<{
+    points: Array<{ timeMs: number; audio: number; motion: number; scene: number }>;
+    availability: { audio: boolean; motion: boolean; scene: boolean };
+  }>;
+  cancelAnalysis(): Promise<void>;
   openMedia(options: { uri: string }): Promise<void>;
   shareMedia(options: { uri: string; filename: string }): Promise<void>;
   addListener(
     event: "exportProgress",
     callback: (event: { state: "preparing" | "trimming" | "rendering" | "saving" | "completed"; progress?: number }) => void,
+  ): Promise<{ remove(): Promise<void> }>;
+  addListener(
+    event: "analysisProgress",
+    callback: (event: { state: "preparing" | "analyzing audio" | "analyzing motion" | "finding boundaries" | "scoring candidates" | "completed" | "cancelled" | "failed" }) => void,
   ): Promise<{ remove(): Promise<void> }>;
 }
 

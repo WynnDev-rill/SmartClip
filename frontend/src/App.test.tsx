@@ -69,6 +69,14 @@ describe("local video selection", () => {
     render(<App />); expect(screen.getByText(/trim UI testing only/i)).toBeInTheDocument(); expect(screen.getByText("Browser fallback")).toBeInTheDocument();
   });
 
+  it("shows automatic controls but honestly rejects browser analysis", async () => {
+    vi.mocked(picker.readBrowserVideo).mockResolvedValue(metadata); render(<App />);
+    await userEvent.upload(screen.getByLabelText("Choose a video file"), new File(["x"], "holiday.mp4"));
+    expect(await screen.findByLabelText("Automatic Highlights")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Analyze Video" }));
+    expect(screen.getByText(/analysis is Android-only.*no backend is called/i)).toBeInTheDocument();
+  });
+
   it("does not fake export in the browser fallback", async () => {
     vi.mocked(picker.readBrowserVideo).mockResolvedValue({ ...metadata, source: "Browser preview" }); render(<App />);
     await userEvent.upload(screen.getByLabelText("Choose a video file"), new File(["x"], "holiday.mp4")); await userEvent.click(await screen.findByRole("button", { name: /export clip/i }));

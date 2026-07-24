@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.ContentValues;
 import android.database.Cursor;
+import android.graphics.Bitmap;
 import android.media.MediaCodec;
 import android.media.MediaExtractor;
 import android.media.MediaFormat;
@@ -24,6 +25,7 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
@@ -46,11 +48,19 @@ import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
 import org.json.JSONObject;
+import com.getcapacitor.JSArray;
 
 @CapacitorPlugin(name = "LocalVideoPicker")
 public class LocalVideoPickerPlugin extends Plugin {
+    private static final int DEFAULT_ANALYSIS_INTERVAL_MS = 1_000;
+    private static final int MINIMUM_ANALYSIS_INTERVAL_MS = 500;
+    private static final long DEFAULT_MAX_ANALYSIS_DURATION_MS = 3_600_000L;
+    private static final int ANALYSIS_FRAME_WIDTH = 32;
+    private static final int ANALYSIS_FRAME_HEIGHT = 18;
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    private final AtomicBoolean analysisCancelled = new AtomicBoolean(false);
     private final ExecutorService exportExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService analysisExecutor = Executors.newSingleThreadExecutor();
     private Transformer compositionTransformer;
 
     @PluginMethod
@@ -105,10 +115,235 @@ public class LocalVideoPickerPlugin extends Plugin {
             if (name == null || size < 0 || durationMs <= 0 || width <= 0 || height <= 0) throw new IllegalStateException("Required metadata unavailable");
             JSObject value = new JSObject(); value.put("filename", name); value.put("fileSize", size); value.put("duration", durationMs / 1000.0);
             value.put("width", width); value.put("height", height); value.put("resolution", width + " × " + height); value.put("mimeType", mime == null ? "Unknown" : mime); value.put("uri", uri.toString()); return value;
-        } finally { retriever.release(); }
+        } finally { releaseMediaMetadataRetrieverSafely(retriever); }
     }
 
     private long parseLong(String value) { if (value == null) return 0; try { return Long.parseLong(value); } catch (NumberFormatException ignored) { return 0; } }
+
+    /** Coarse, bounded analysis: downscaled frame luminance deltas plus audio packet energy. */
+    @PluginMethod
+    public void analyzeVideo(PluginCall call) {
+        String source = call.getString("uri");
+        Integer requestedIntervalMs = call.getInt("intervalMs");
+        Long requestedMaximumDurationMs = call.getLong("maxDurationMs");
+        int intervalMs = Math.max(
+            MINIMUM_ANALYSIS_INTERVAL_MS,
+            requestedIntervalMs == null ? DEFAULT_ANALYSIS_INTERVAL_MS : requestedIntervalMs
+        );
+        long maximumDurationMs = requestedMaximumDurationMs == null
+            ? DEFAULT_MAX_ANALYSIS_DURATION_MS
+            : requestedMaximumDurationMs;
+        if (source == null) {
+            call.reject("The source URI is unavailable.", "SOURCE_INACCESSIBLE");
+            return;
+        }
+        if (maximumDurationMs <= 0) {
+            call.reject("The analysis duration limit must be positive.", "INVALID_ANALYSIS_OPTIONS");
+            return;
+        }
+        analysisCancelled.set(false);
+        try {
+            analysisExecutor.execute(() -> runAnalysis(call, Uri.parse(source), intervalMs, maximumDurationMs));
+        } catch (RejectedExecutionException error) {
+            call.reject("The analyzer is unavailable.", "ANALYZER_UNAVAILABLE", error);
+        }
+    }
+
+    @PluginMethod
+    public void cancelAnalysis(PluginCall call) {
+        analysisCancelled.set(true);
+        call.resolve();
+    }
+
+    private void analysisProgress(String state) {
+        JSObject event = new JSObject();
+        event.put("state", state);
+        notifyListeners("analysisProgress", event);
+    }
+
+    private void checkAnalysisCancelled() throws InterruptedException {
+        if (analysisCancelled.get()) {
+            throw new InterruptedException();
+        }
+    }
+
+    private void runAnalysis(PluginCall call, Uri uri, int intervalMs, long maximumDurationMs) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            analysisProgress("preparing");
+            retriever.setDataSource(getContext(), uri);
+            long durationMs = parseLong(
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            );
+            if (durationMs > maximumDurationMs) {
+                call.reject("Video exceeds the 60-minute analysis limit.", "VIDEO_TOO_LONG");
+                return;
+            }
+
+            int pointCount = (int) Math.ceil((double) durationMs / intervalMs) + 1;
+            double[] audioEnergy = new double[pointCount];
+            int[] audioSampleCounts = new int[pointCount];
+            boolean hasAudio = false;
+
+            analysisProgress("analyzing audio");
+            extractor.setDataSource(getContext(), uri, null);
+            for (int trackIndex = 0; trackIndex < extractor.getTrackCount(); trackIndex++) {
+                MediaFormat format = extractor.getTrackFormat(trackIndex);
+                String mimeType = format.getString(MediaFormat.KEY_MIME);
+                if (mimeType != null && mimeType.startsWith("audio/")) {
+                    extractor.selectTrack(trackIndex);
+                    hasAudio = true;
+                }
+            }
+            ByteBuffer packetBuffer = ByteBuffer.allocateDirect(256 * 1024);
+            while (hasAudio) {
+                checkAnalysisCancelled();
+                long sampleTimeUs = extractor.getSampleTime();
+                if (sampleTimeUs < 0) break;
+                int pointIndex = (int) Math.min(
+                    pointCount - 1,
+                    sampleTimeUs / 1_000 / intervalMs
+                );
+                int sampleSize = extractor.readSampleData(packetBuffer, 0);
+                if (sampleSize < 0) break;
+                audioEnergy[pointIndex] += Math.log1p(sampleSize);
+                audioSampleCounts[pointIndex]++;
+                extractor.advance();
+            }
+
+            analysisProgress("analyzing motion");
+            double[] motion = new double[pointCount];
+            double[] scene = new double[pointCount];
+            double previousLuminance = -1;
+            boolean hasMotion = false;
+            for (int pointIndex = 0; pointIndex < pointCount; pointIndex++) {
+                checkAnalysisCancelled();
+                long frameTimeUs = (long) pointIndex * intervalMs * 1_000;
+                Bitmap frame = retriever.getFrameAtTime(
+                    frameTimeUs,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                );
+                if (frame == null) continue;
+
+                Bitmap thumbnail = null;
+                try {
+                    thumbnail = Bitmap.createScaledBitmap(
+                        frame,
+                        ANALYSIS_FRAME_WIDTH,
+                        ANALYSIS_FRAME_HEIGHT,
+                        true
+                    );
+                    hasMotion = true;
+                    int[] pixels = new int[ANALYSIS_FRAME_WIDTH * ANALYSIS_FRAME_HEIGHT];
+                    thumbnail.getPixels(
+                        pixels,
+                        0,
+                        ANALYSIS_FRAME_WIDTH,
+                        0,
+                        0,
+                        ANALYSIS_FRAME_WIDTH,
+                        ANALYSIS_FRAME_HEIGHT
+                    );
+                    double luminance = averageLuminance(pixels);
+                    if (previousLuminance >= 0) {
+                        motion[pointIndex] = Math.abs(luminance - previousLuminance);
+                        scene[pointIndex] = motion[pointIndex] > 0.18
+                            ? motion[pointIndex]
+                            : 0;
+                    }
+                    previousLuminance = luminance;
+                } finally {
+                    if (thumbnail != null && thumbnail != frame && !thumbnail.isRecycled()) {
+                        recycleBitmapSafely(thumbnail);
+                    }
+                    if (!frame.isRecycled()) recycleBitmapSafely(frame);
+                }
+            }
+
+            analysisProgress("finding boundaries");
+            JSArray points = new JSArray();
+            for (int pointIndex = 0; pointIndex < pointCount; pointIndex++) {
+                checkAnalysisCancelled();
+                JSObject point = new JSObject();
+                point.put("timeMs", Math.min(durationMs, (long) pointIndex * intervalMs));
+                point.put(
+                    "audio",
+                    audioSampleCounts[pointIndex] > 0
+                        ? audioEnergy[pointIndex] / audioSampleCounts[pointIndex]
+                        : 0
+                );
+                point.put("motion", motion[pointIndex]);
+                point.put("scene", scene[pointIndex]);
+                points.put(point);
+            }
+
+            checkAnalysisCancelled();
+            analysisProgress("scoring candidates");
+            JSObject availability = new JSObject();
+            availability.put("audio", hasAudio);
+            availability.put("motion", hasMotion);
+            availability.put("scene", hasMotion);
+            JSObject result = new JSObject();
+            result.put("points", points);
+            result.put("availability", availability);
+            checkAnalysisCancelled();
+            analysisProgress("completed");
+            call.resolve(result);
+        } catch (InterruptedException error) {
+            analysisProgress("cancelled");
+            call.reject("Analysis cancelled.", "CANCELLED");
+        } catch (SecurityException error) {
+            analysisProgress("failed");
+            call.reject("The source URI is unavailable.", "SOURCE_INACCESSIBLE", error);
+        } catch (Exception error) {
+            analysisProgress("failed");
+            call.reject(
+                "The device decoder could not analyze this video.",
+                "DECODER_FAILURE",
+                error
+            );
+        } finally {
+            releaseMediaExtractorSafely(extractor);
+            releaseMediaMetadataRetrieverSafely(retriever);
+        }
+    }
+
+    private void releaseMediaMetadataRetrieverSafely(MediaMetadataRetriever retriever) {
+        try {
+            retriever.release();
+        } catch (IOException ignored) {
+            // Cleanup must not replace an analysis result or an earlier decoder error.
+        }
+    }
+
+    private void releaseMediaExtractorSafely(MediaExtractor extractor) {
+        try {
+            extractor.release();
+        } catch (RuntimeException ignored) {
+            // Continue releasing the remaining analysis resources.
+        }
+    }
+
+    private void recycleBitmapSafely(Bitmap bitmap) {
+        try {
+            bitmap.recycle();
+        } catch (RuntimeException ignored) {
+            // A device bitmap cleanup failure must not abort analysis cleanup.
+        }
+    }
+
+    private double averageLuminance(int[] pixels) {
+        double luminance = 0;
+        for (int pixel : pixels) {
+            luminance += (
+                0.2126 * ((pixel >> 16) & 255)
+                + 0.7152 * ((pixel >> 8) & 255)
+                + 0.0722 * (pixel & 255)
+            ) / 255.0;
+        }
+        return luminance / pixels.length;
+    }
 
     @PluginMethod
     public void exportClip(PluginCall call) {
@@ -256,6 +491,7 @@ public class LocalVideoPickerPlugin extends Plugin {
     protected void handleOnDestroy() {
         cancelled.set(true);
         exportExecutor.shutdownNow();
+        analysisCancelled.set(true); analysisExecutor.shutdownNow();
         super.handleOnDestroy();
     }
 
