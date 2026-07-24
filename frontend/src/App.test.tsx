@@ -46,7 +46,9 @@ describe("local video selection", () => {
   it("uses the native Android picker instead of the file input", async () => {
     vi.mocked(picker.isNativeAndroid).mockReturnValue(true); vi.mocked(picker.chooseNativeVideo).mockResolvedValue(metadata);
     render(<App />); await userEvent.click(screen.getByRole("button", { name: "Choose Video" }));
-    expect(picker.chooseNativeVideo).toHaveBeenCalledOnce(); expect(picker.readBrowserVideo).not.toHaveBeenCalled(); expect(await screen.findByText("Android native")).toBeInTheDocument();
+    expect(picker.chooseNativeVideo).toHaveBeenCalledOnce();
+    expect(picker.readBrowserVideo).not.toHaveBeenCalled();
+    expect(await screen.findByText(/^Metadata ready.*Android native$/i)).toBeInTheDocument();
   });
 
   it("clearly labels browser fallback limitations", () => {
