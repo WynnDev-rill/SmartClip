@@ -24,3 +24,14 @@ __pycache__/
 *.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+
+# Generated Android/Gradle artifacts (created locally and in CI)
+frontend/android/
+**/build/
+.gradle/
+*.apk
+*.aab
+*.aar
+*.dex
+*.class
+local.properties

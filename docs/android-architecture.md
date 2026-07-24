@@ -1,0 +1,58 @@
+# Android local-first architecture
+
+## Architecture audit: today
+
+SmartClip is currently a two-service web application. The React 19, TypeScript, Vite, and Tailwind frontend owns the dark upload and metadata UI. Its single API adapter sends multipart uploads to FastAPI. FastAPI streams temporary video files, invokes `ffprobe`, returns technical metadata, and deletes uploads. nginx/Vite proxy `/api`; Docker Compose connects the independently deployed services. This backend is **transitional** and remains available for browser development during migration.
+
+## Target architecture
+
+The target is an Android application whose Capacitor WebView loads the compiled React bundle from the APK. React remains the presentation layer. Native plugins will select user media through Android's system picker and expose narrowly scoped, Kotlin-based on-device processing services. A packaged local FFmpeg engine will inspect and transform media in application-controlled temporary storage. Scene detection, deterministic highlight scoring, clipping, preview, and export will execute on the device. The final runtime has no FastAPI, hosted website, Render, Railway, Cloudflare, paid API, AI API, cloud processor, or required network connection.
+
+```text
+Android APK
+├── Capacitor WebView → bundled Vite assets (`frontend/dist`)
+├── reusable React UI, state, validation, and presentation
+├── typed Capacitor plugin boundary (future)
+├── Android system document picker (future)
+└── local media pipeline (future)
+    ├── metadata / FFmpeg
+    ├── scene and audio analysis
+    ├── deterministic highlight scoring
+    └── clip render and user-selected export
+```
+
+No `server.url` is configured in `capacitor.config.ts`: Capacitor copies and serves `webDir` locally. The Android manifest intentionally requests no storage, camera, microphone, or internet permissions. Future access should prefer the system document picker and scoped storage rather than broad permissions.
+
+## Reuse and replacement map
+
+| Area | Reuse | Migration action |
+| --- | --- | --- |
+| React/Tailwind UI and UI primitives | Reuse directly | Add safe-area and mobile layouts; replace network progress with local job progress. |
+| File validation and metadata presentation | Reuse concepts and types | Source data from a typed native bridge rather than HTTP. |
+| `src/lib/api.ts` | Browser-only transitional adapter | Replace with a platform-neutral media service and native implementation. |
+| FastAPI upload/temp-file lifecycle | No Android runtime dependency | Replace with Android URIs, scoped cache, and lifecycle-aware cleanup. |
+| `ffprobe` metadata route | Contract may guide native types | Replace with packaged on-device probing. |
+| nginx, Docker Compose, hosted deployment | Development/transitional only | Remove after browser compatibility and native processing migration are complete. |
+| Backend tests | Retain while backend exists | Add native unit/instrumentation tests and JS bridge contract tests. |
+
+The first Android build deliberately disables server-backed upload inside Capacitor. Browser behavior remains intact, which keeps existing frontend/backend development usable without making the APK depend on an API URL.
+
+## Risks
+
+- Android ABI packaging, FFmpeg licensing, binary size, and performance require deliberate engine selection.
+- Large videos can exhaust memory, storage, battery, or thermal budgets; processing must stream, report progress, cancel, and clean up safely.
+- Content URIs are not ordinary file paths and permissions may be short-lived.
+- Web/native bridge contracts can drift; shared schemas and contract tests are needed.
+- WebView lifecycle events, process death, rotation, and background execution require recoverable job state. Portrait is intentionally fixed for this foundation, but process death still matters.
+- Edge-to-edge displays, accessibility, small screens, and OEM WebView differences require device testing.
+- Keeping browser and native paths temporarily creates two implementations and an explicit deprecation burden.
+
+## Phased migration
+
+1. **Foundation (this PR):** Capacitor configuration, CI-generated Android project, local bundled assets, platform detection, safe-area UI, build scripts, and debug APK CI. The generated native tree is ignored so source changes remain text-only.
+2. **Local media access:** system picker, persisted URI access when necessary, native metadata contract, cancellation, and temporary-file policy.
+3. **Processing engine:** select and package a license-compatible local FFmpeg implementation; probe and transcode on supported ABIs with no network.
+4. **Analysis:** implement deterministic scene/audio signals and highlight scoring with fixtures and performance budgets.
+5. **Clip workflow:** preview, manual controls, automatic clipping, progress, cancellation, and MediaStore export.
+6. **Hardening:** lifecycle recovery, instrumentation/device matrix, accessibility, performance, storage pressure, and privacy review.
+7. **Retirement:** remove hosted API requirements and eventually the transitional backend/deployment after all required functionality is local.
