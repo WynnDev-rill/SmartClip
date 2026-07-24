@@ -1,0 +1,7 @@
+import {render,screen} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import {beforeEach,describe,expect,it,vi} from "vitest";
+import App from "./App";import * as api from "@/lib/api";
+vi.mock("@/lib/api",async original=>({...await original<typeof import("@/lib/api")>(),uploadVideo:vi.fn(),deleteVideo:vi.fn()}));
+const metadata={id:"abc",filename:"demo.mp4",duration:12.5,width:1920,height:1080,resolution:"1920x1080",frame_rate:30,video_codec:"h264",audio_codec:"aac",container:"mov,mp4",file_size:1048576};
+describe("App",()=>{beforeEach(()=>vi.clearAllMocks());it("uploads and displays metadata",async()=>{vi.mocked(api.uploadVideo).mockReturnValue({promise:Promise.resolve(metadata),cancel:vi.fn()});render(<App/>);await userEvent.upload(screen.getByLabelText("Choose a video file"),new File(["x"],"demo.mp4",{type:"video/mp4"}));expect(await screen.findByText("1920x1080")).toBeInTheDocument()});it("waits for removal before restoring the uploader",async()=>{vi.mocked(api.uploadVideo).mockReturnValue({promise:Promise.resolve(metadata),cancel:vi.fn()});vi.mocked(api.deleteVideo).mockResolvedValue();render(<App/>);await userEvent.upload(screen.getByLabelText("Choose a video file"),new File(["x"],"demo.mp4"));await userEvent.click(await screen.findByRole("button",{name:/remove video/i}));expect(api.deleteVideo).toHaveBeenCalledWith("abc");expect(await screen.findByText("Drop your video here")).toBeInTheDocument()})});

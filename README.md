@@ -2,7 +2,7 @@
 
 SmartClip is a lightweight, algorithm-driven video highlight generator. Its guiding constraint is simple: produce a small number of genuinely useful clips—or no clips when the source has no strong highlights. It will not rely on paid APIs, AI APIs, or cloud AI services.
 
-> **Foundation status:** this repository currently contains the application shell and health integration only. Video ingestion, analysis, clipping, subtitles, and export are intentionally not implemented yet.
+> **Foundation status:** local video upload and technical metadata inspection are available. Analysis, clipping, subtitles, and export are not implemented yet.
 
 ## Architecture
 
@@ -53,6 +53,11 @@ npm run dev
 
 Open <http://localhost:5173>. Vite forwards the UI health request to <http://localhost:8000/api/health>. API documentation is available at <http://localhost:8000/docs>.
 
+Uploads support MP4, MOV, MKV, and WEBM. The API streams each upload into temporary
+storage, inspects it with `ffprobe`, and removes temporary media at shutdown. Configure
+the byte limit with `SMARTCLIP_MAX_UPLOAD_SIZE` and storage location with
+`SMARTCLIP_UPLOAD_DIRECTORY`.
+
 To point the frontend at a separately hosted API, set `VITE_API_URL` (including its `/api` suffix) before building.
 
 ## Docker
@@ -66,7 +71,7 @@ The web application is served at <http://localhost:3000>; the API remains direct
 ## Quality checks
 
 ```bash
-cd frontend && npm run lint && npm run typecheck && npm run build
+cd frontend && npm run lint && npm run typecheck && npm test -- --run && npm run build
 cd backend && ruff check . && pytest
 ```
 
