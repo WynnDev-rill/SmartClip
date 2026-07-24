@@ -15,7 +15,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci
+      # Temporary until frontend/package-lock.json is committed; restore `npm ci`
+      # as soon as a valid lockfile is available.
+      - run: npm install --no-audit --no-fund
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test -- --run
