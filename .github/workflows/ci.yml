@@ -25,3 +25,5 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: ruff check .
       - run: pytest
+      - name: Validate production Docker image
+        run: docker build -t smartclip-url .
