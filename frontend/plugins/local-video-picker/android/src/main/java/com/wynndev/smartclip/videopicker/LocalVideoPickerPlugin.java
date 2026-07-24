@@ -28,11 +28,15 @@ import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @CapacitorPlugin(name = "LocalVideoPicker")
 public class LocalVideoPickerPlugin extends Plugin {
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    private final ExecutorService exportExecutor = Executors.newSingleThreadExecutor();
 
     @PluginMethod
     public void chooseVideo(PluginCall call) {
@@ -96,7 +100,14 @@ public class LocalVideoPickerPlugin extends Plugin {
         String source = call.getString("uri"); Long startMs = call.getLong("startMs"); Long endMs = call.getLong("endMs");
         if (source == null || startMs == null || endMs == null || startMs < 0 || endMs - startMs < 1000) { call.reject("Invalid trim range.", "INVALID_RANGE"); return; }
         cancelled.set(false);
-        getBridge().executeOnThreadPool(() -> {
+        try {
+            exportExecutor.execute(() -> runExport(call, source, startMs, endMs));
+        } catch (RejectedExecutionException error) {
+            call.reject("The editor is shutting down.", "EDITOR_UNAVAILABLE", error);
+        }
+    }
+
+    private void runExport(PluginCall call, String source, long startMs, long endMs) {
             File temporary = null; Uri output = null;
             try {
                 progress("preparing", null);
@@ -123,7 +134,6 @@ public class LocalVideoPickerPlugin extends Plugin {
             } catch (UnsupportedOperationException error) { call.reject(error.getMessage(), "UNSUPPORTED_CODEC", error);
             } catch (Exception error) { if (output != null) getContext().getContentResolver().delete(output, null, null); call.reject("Local export failed. Check available storage and source compatibility.", "EXPORT_FAILED", error);
             } finally { if (temporary != null) temporary.delete(); }
-        });
     }
 
     private long remux(Uri source, File destination, long startMs, long endMs) throws Exception {
@@ -158,12 +168,71 @@ public class LocalVideoPickerPlugin extends Plugin {
     private void checkCancelled() throws InterruptedException { if (cancelled.get()) throw new InterruptedException(); }
     private void progress(String state, Integer percent) { JSObject value = new JSObject(); value.put("state", state); if (percent != null) value.put("progress", percent); notifyListeners("exportProgress", value); }
 
-    @PluginMethod public void cancelExport(PluginCall call) { cancelled.set(true); call.resolve(); }
-    @PluginMethod public void openMedia(PluginCall call) { launchMedia(call, false); }
-    @PluginMethod public void shareMedia(PluginCall call) { launchMedia(call, true); }
+    @Override
+    protected void handleOnDestroy() {
+        cancelled.set(true);
+        exportExecutor.shutdownNow();
+        super.handleOnDestroy();
+    }
+
+    @PluginMethod
+    public void cancelExport(PluginCall call) {
+        cancelled.set(true);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openMedia(PluginCall call) {
+        launchMedia(call, false);
+    }
+
+    @PluginMethod
+    public void shareMedia(PluginCall call) {
+        launchMedia(call, true);
+    }
+
     private void launchMedia(PluginCall call, boolean share) {
-        try { Uri uri = Uri.parse(call.getString("uri")); Intent intent = share ? new Intent(Intent.ACTION_SEND) : new Intent(Intent.ACTION_VIEW); intent.setType("video/mp4");
-            if (share) intent.putExtra(Intent.EXTRA_STREAM, uri); else intent.setDataAndType(uri, "video/mp4"); intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); getActivity().startActivity(share ? Intent.createChooser(intent, "Share SmartClip") : intent); call.resolve();
-        } catch (Exception error) { call.reject("No compatible app is available.", "NO_HANDLER", error); }
+        Activity activity = getActivity();
+        String uriValue = call.getString("uri");
+        if (activity == null) {
+            call.reject("SmartClip is not currently attached to an Android activity.", "ACTIVITY_UNAVAILABLE");
+            return;
+        }
+        if (uriValue == null) {
+            call.reject("The exported video URI is missing.", "INVALID_MEDIA_URI");
+            return;
+        }
+
+        Uri uri = Uri.parse(uriValue);
+        if (!"content".equals(uri.getScheme()) || uri.getAuthority() == null) {
+            call.reject("The exported video URI is invalid.", "INVALID_MEDIA_URI");
+            return;
+        }
+
+        Intent mediaIntent;
+        if (share) {
+            mediaIntent = new Intent(Intent.ACTION_SEND);
+            mediaIntent.setType("video/mp4");
+            mediaIntent.putExtra(Intent.EXTRA_STREAM, uri);
+        } else {
+            mediaIntent = new Intent(Intent.ACTION_VIEW);
+            mediaIntent.setDataAndType(uri, "video/mp4");
+        }
+        mediaIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+        if (mediaIntent.resolveActivity(activity.getPackageManager()) == null) {
+            call.reject("No compatible app is available.", "NO_HANDLER");
+            return;
+        }
+
+        try {
+            Intent launchIntent = share
+                ? Intent.createChooser(mediaIntent, "Share SmartClip")
+                : mediaIntent;
+            activity.startActivity(launchIntent);
+            call.resolve();
+        } catch (RuntimeException error) {
+            call.reject("No compatible app is available.", "NO_HANDLER", error);
+        }
     }
 }
