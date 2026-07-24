@@ -1,105 +1,59 @@
-import { useRef, useState } from "react";
-import { CircleCheck, FileVideo, Info, Scissors, Trash2, Upload, X } from "lucide-react";
+import { type ChangeEvent, useRef, useState } from "react";
+import { CircleCheck, FileVideo, Info, LoaderCircle, Scissors, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { deleteVideo, uploadVideo, type VideoMetadata } from "@/lib/api";
 import { appVersion, getPlatform } from "@/lib/platform";
+import { chooseNativeVideo, isNativeAndroid, readBrowserVideo, releaseBrowserVideo, type LocalVideoMetadata } from "@/lib/video-picker";
 
-const MAX_SIZE = 500 * 1024 * 1024;
-const ALLOWED = [".mp4", ".mov", ".mkv", ".webm"];
-const formatBytes = (size: number) => `${(size / 1024 / 1024).toFixed(1)} MB`;
+const formatBytes = (bytes: number) => bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+const formatDuration = (seconds: number) => `${Math.floor(seconds / 60)}:${Math.round(seconds % 60).toString().padStart(2, "0")}`;
 
 export default function App() {
   const input = useRef<HTMLInputElement>(null);
-  const cancel = useRef<(() => void) | null>(null);
-  const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
-  const [progress, setProgress] = useState<number | null>(null);
+  const [video, setVideo] = useState<LocalVideoMetadata | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [removing, setRemoving] = useState(false);
-  const platform = getPlatform();
-  const isAndroid = platform === "Android (Capacitor)";
+  const native = isNativeAndroid();
 
-  const select = (file?: File) => {
-    if (!file) return;
-    const extension = `.${file.name.split(".").pop()?.toLowerCase()}`;
-    if (!ALLOWED.includes(extension)) {
-      setError("Choose an MP4, MOV, MKV, or WEBM video.");
-      return;
-    }
-    if (file.size > MAX_SIZE) {
-      setError(`Video must be smaller than ${formatBytes(MAX_SIZE)}.`);
-      return;
-    }
-    setError("");
-    setProgress(0);
-    const upload = uploadVideo(file, setProgress);
-    cancel.current = upload.cancel;
-    upload.promise
-      .then(setMetadata)
-      .catch((reason: unknown) => {
-        if (!(reason instanceof DOMException && reason.name === "AbortError"))
-          setError(reason instanceof Error ? reason.message : "Upload failed.");
-      })
-      .finally(() => {
-        setProgress(null);
-        cancel.current = null;
-      });
-  };
-
-  const remove = async () => {
-    if (!metadata) return;
-    setRemoving(true);
-    setError("");
+  const runSelection = async (file?: File) => {
+    setError(""); setLoading(true);
     try {
-      await deleteVideo(metadata.id);
-      setMetadata(null);
+      const selected = native ? await chooseNativeVideo() : file ? await readBrowserVideo(file) : null;
+      if (selected) { releaseBrowserVideo(video); setVideo(selected); }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not remove the video.");
-    } finally {
-      setRemoving(false);
-    }
+      const message = reason instanceof Error ? reason.message : "The selected video could not be read.";
+      setError(/cancel/i.test(message) ? "Video selection was cancelled. No file was changed." : /permission|denied/i.test(message) ? "Permission was not granted. Please allow access in the system picker." : message);
+    } finally { setLoading(false); if (input.current) input.current.value = ""; }
   };
 
-  return (
-    <main className="min-h-screen px-5 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(2rem,env(safe-area-inset-top))] sm:px-8">
-      <nav className="mx-auto flex max-w-6xl items-center gap-3">
-        <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary"><Scissors size={20} /></span>
-        <div><p className="font-semibold">SmartClip</p><p className="text-xs text-muted-foreground">Local video workspace</p></div>
-      </nav>
+  const remove = () => { releaseBrowserVideo(video); setVideo(null); setError(""); };
 
-      <section className="mx-auto mt-12 max-w-4xl text-center sm:mt-16">
-        <p className="text-sm font-medium text-violet-400">PRIVATE • FAST • LOCAL</p>
-        <h1 className="mt-4 text-4xl font-semibold tracking-tight sm:text-6xl">Start with your video.</h1>
-        <p className="mx-auto mt-5 max-w-xl text-muted-foreground">Prepare a recording for the local-first highlight workflow.</p>
-        <div className="mt-10 overflow-hidden rounded-3xl border border-white/10 bg-white/[.04] p-4 shadow-2xl sm:p-8">
-          {isAndroid ? (
-            <div className="rounded-2xl border border-violet-400/30 bg-black/20 px-5 py-12">
-              <span className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-violet-400/10 text-violet-300"><FileVideo /></span>
-              <h2 className="mt-5 text-xl font-semibold">Android foundation is ready</h2>
-              <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">On-device video selection and processing are not installed yet. This build never requires a remote website.</p>
-            </div>
-          ) : !metadata ? (
-            <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); select(event.dataTransfer.files[0]); }} className="rounded-2xl border border-dashed border-violet-400/40 bg-black/20 px-5 py-16">
-              <label className="sr-only" htmlFor="video-input">Choose a video file</label>
-              <input id="video-input" ref={input} className="sr-only" type="file" accept=".mp4,.mov,.mkv,.webm,video/mp4,video/quicktime,video/x-matroska,video/webm" onChange={(event) => select(event.target.files?.[0])} />
-              <span className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-violet-400/10 text-violet-300"><Upload /></span>
-              <h2 className="mt-5 text-xl font-semibold">Drop your video here</h2>
-              <p className="mt-2 text-sm text-muted-foreground">MP4, MOV, MKV, or WEBM • up to 500 MB</p>
-              <Button className="mt-6" onClick={() => input.current?.click()}>Choose video</Button>
-              {progress !== null && <div className="mx-auto mt-7 max-w-md" role="status" aria-live="polite"><div className="mb-2 flex justify-between text-sm"><span>Uploading…</span><span>{progress}%</span></div><div className="h-2 overflow-hidden rounded bg-white/10"><div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} /></div><button className="mt-4 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-white" onClick={() => cancel.current?.()}><X size={15} /> Cancel upload</button></div>}
-            </div>
-          ) : (
-            <div className="text-left"><div className="flex flex-col gap-5 border-b border-white/10 pb-6 sm:flex-row sm:items-center"><span className="grid h-14 w-14 place-items-center rounded-xl bg-violet-400/10 text-violet-300"><FileVideo /></span><div className="min-w-0 flex-1"><h2 className="truncate text-lg font-semibold">{metadata.filename}</h2><p className="text-sm text-muted-foreground">Ready for processing</p></div><Button variant="outline" disabled={removing} onClick={remove}><Trash2 size={16} />{removing ? "Removing…" : "Remove video"}</Button></div><dl className="grid grid-cols-2 gap-3 pt-6 sm:grid-cols-3">{[["Duration", `${metadata.duration.toFixed(1)} sec`], ["Resolution", metadata.resolution], ["Frame rate", `${metadata.frame_rate.toFixed(2)} fps`], ["Video codec", metadata.video_codec.toUpperCase()], ["Audio codec", metadata.audio_codec?.toUpperCase() ?? "None"], ["Container", metadata.container], ["File size", formatBytes(metadata.file_size)]].map(([label, value]) => <div key={label} className="rounded-xl bg-black/20 p-4"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 font-medium">{value}</dd></div>)}</dl></div>
-          )}
-          {error && <p className="mt-4 rounded-xl bg-rose-400/10 p-3 text-sm text-rose-300" role="alert">{error}</p>}
-        </div>
-      </section>
+  const handleBrowserSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) {
+      setLoading(false);
+      setError("");
+      return;
+    }
+    void runSelection(file);
+  };
 
-      <section aria-labelledby="about-title" className="mx-auto mt-8 max-w-4xl rounded-3xl border border-white/10 bg-white/[.04] p-5 sm:p-7">
-        <div className="flex items-center gap-3"><Info className="text-violet-300" size={20} /><div><h2 id="about-title" className="font-semibold">About this build</h2><p className="text-sm text-muted-foreground">Android local-first foundation</p></div></div>
-        <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-          {[["App version", appVersion], ["Platform", platform], ["Local-first status", "Foundation active"], ["Processing engine", "Not installed yet"]].map(([label, value]) => <div key={label} className="flex items-center justify-between gap-4 rounded-xl bg-black/20 p-4"><dt className="text-muted-foreground">{label}</dt><dd className="flex items-center gap-2 text-right font-medium">{label === "Local-first status" && <CircleCheck className="text-emerald-400" size={15} />}{value}</dd></div>)}
-        </dl>
-      </section>
-    </main>
-  );
+  return <main className="min-h-screen px-5 pb-[max(2rem,env(safe-area-inset-bottom))] pt-[max(2rem,env(safe-area-inset-top))] sm:px-8">
+    <nav className="mx-auto flex max-w-5xl items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary"><Scissors size={20}/></span><div><p className="font-semibold">SmartClip</p><p className="text-xs text-muted-foreground">Private, on-device workspace</p></div></nav>
+    <section className="mx-auto mt-12 max-w-3xl text-center sm:mt-16">
+      <p className="text-sm font-medium text-violet-400">PRIVATE • FAST • LOCAL</p><h1 className="mt-4 text-4xl font-semibold tracking-tight sm:text-6xl">Choose your video.</h1>
+      <p className="mx-auto mt-5 max-w-xl text-muted-foreground">Your video stays on this device. SmartClip reads only the metadata needed to prepare the next step.</p>
+      <div className="mt-9 rounded-3xl border border-white/10 bg-white/[.04] p-4 shadow-2xl sm:p-7">
+        {!video ? <div className="rounded-2xl border border-dashed border-violet-400/40 bg-black/20 px-5 py-14">
+          <input aria-label="Choose a video file" ref={input} className="sr-only" type="file" accept=".mp4,.mov,.mkv,.webm,video/mp4,video/quicktime,video/x-matroska,video/webm" onChange={handleBrowserSelection}/>
+          <span className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-violet-400/10 text-violet-300"><Upload/></span><h2 className="mt-5 text-xl font-semibold">Select one local video</h2><p className="mt-2 text-sm text-muted-foreground">MP4, MOV, MKV, or WEBM</p>
+          <Button className="mt-6 active:scale-[.97] transition-transform" disabled={loading} onClick={() => native ? runSelection() : input.current?.click()}>{loading ? <><LoaderCircle className="animate-spin" size={17}/> Reading metadata…</> : "Choose Video"}</Button>
+          <p className="mx-auto mt-4 max-w-md text-xs text-muted-foreground">{native ? "Android's system picker provides a durable content URI; no broad storage permission is requested." : "Browser fallback: metadata support depends on your browser and is not equivalent to Android native metadata."}</p>
+        </div> : <article className="metadata-enter text-left"><div className="flex flex-col gap-4 border-b border-white/10 pb-5 sm:flex-row sm:items-center"><span className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-violet-400/10 text-violet-300"><FileVideo/></span><div className="min-w-0 flex-1"><h2 className="truncate text-lg font-semibold">{video.filename}</h2><p className="text-sm text-emerald-300">Metadata ready • {video.source}</p></div><Button variant="outline" className="active:scale-[.97] transition-transform" onClick={remove}><Trash2 size={16}/>Remove Video</Button></div>
+          <dl className="grid grid-cols-2 gap-3 pt-5 sm:grid-cols-3">{[["File size",formatBytes(video.fileSize)],["Duration",formatDuration(video.duration)],["Width",`${video.width} px`],["Height",`${video.height} px`],["Resolution",video.resolution],["Orientation",video.orientation],["MIME type",video.mimeType],["Local URI",video.uri]].map(([label,value])=><div key={label} className={`${label === "Local URI" ? "col-span-2 sm:col-span-3" : ""} min-w-0 rounded-xl bg-black/20 p-4`}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 break-all text-sm font-medium">{value}</dd></div>)}</dl>
+        </article>}
+        {error && <p role="alert" className="mt-4 rounded-xl bg-rose-400/10 p-3 text-sm text-rose-300">{error}</p>}
+      </div>
+    </section>
+    <section className="mx-auto mt-8 max-w-3xl rounded-3xl border border-white/10 bg-white/[.04] p-5"><div className="flex items-center gap-3"><Info className="text-violet-300" size={20}/><h2 className="font-semibold">Local-first status</h2></div><dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">{[["App version",appVersion],["Platform",getPlatform()],["Video access",native ? "Native system picker" : "Browser fallback"]].map(([label,value])=><div key={label} className="rounded-xl bg-black/20 p-4"><dt className="text-muted-foreground">{label}</dt><dd className="mt-1 flex items-center gap-2 font-medium">{label === "Video access" && <CircleCheck className="text-emerald-400" size={15}/ >}{value}</dd></div>)}</dl></section>
+  </main>;
 }
