@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -5,6 +7,9 @@ class Settings(BaseSettings):
     app_name: str = "SmartClip API"
     environment: str = "development"
     frontend_origins: str = "http://localhost:5173"
+    max_upload_size: int = 500 * 1024 * 1024
+    upload_directory: Path = Path("/tmp/smartclip-uploads")
+    ffprobe_binary: str = "ffprobe"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="SMARTCLIP_")
 

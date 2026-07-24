@@ -1,3 +1,5 @@
-export type Health = { status: string; service: string };
-const API_URL = import.meta.env.VITE_API_URL ?? "/api";
-export async function getHealth(): Promise<Health> { const response=await fetch(`${API_URL}/health`); if(!response.ok) throw new Error("Health check failed"); return response.json() as Promise<Health>; }
+export type VideoMetadata = { id:string; filename:string; duration:number; width:number; height:number; resolution:string; frame_rate:number; video_codec:string; audio_codec:string|null; container:string; file_size:number };
+const API_URL=import.meta.env.VITE_API_URL ?? "/api";
+function errorMessage(request:XMLHttpRequest){try{return (JSON.parse(request.responseText) as {detail:{message:string}}).detail.message}catch{return "Upload failed. Please try again."}}
+export function uploadVideo(file:File,onProgress:(percent:number)=>void){const request=new XMLHttpRequest();const promise=new Promise<VideoMetadata>((resolve,reject)=>{request.open("POST",`${API_URL}/videos`);request.upload.onprogress=(event)=>event.lengthComputable&&onProgress(Math.round(event.loaded/event.total*100));request.onload=()=>request.status>=200&&request.status<300?resolve(JSON.parse(request.responseText) as VideoMetadata):reject(new Error(errorMessage(request)));request.onerror=()=>reject(new Error("The upload could not reach SmartClip."));request.onabort=()=>reject(new DOMException("Upload cancelled","AbortError"));const body=new FormData();body.append("file",file);request.send(body)});return {promise,cancel:()=>request.abort()}}
+export async function deleteVideo(id:string){const response=await fetch(`${API_URL}/videos/${id}`,{method:"DELETE"});if(!response.ok)throw new Error("Could not remove the video.")}
