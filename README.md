@@ -75,3 +75,9 @@ GitHub Actions runs these same frontend build, backend lint, and backend test ga
 ## Roadmap (not yet implemented)
 
 Scene detection, voice activity detection, highlight scoring, natural ending detection, facecam layouts, vertical 9:16 export, and optional subtitles will arrive as separately tested modules. FFmpeg will be the media-processing foundation.
+
+## Local video uploads
+
+The workspace accepts one **MP4, MOV, MKV, or WEBM** file through `POST /api/videos/upload`. The API streams the multipart body to an application-owned temporary path (never a user-supplied path), then runs `ffprobe` to validate the video and extract duration, dimensions, frame rate, codecs, and container metadata. Metadata is available from `GET /api/videos/{video_id}`; `DELETE /api/videos/{video_id}` removes both media and metadata.
+
+Uploads default to a **2 GB** maximum and a **24-hour** lifetime. A background task and API requests clean up expired media. Configure deployments with `MAX_UPLOAD_SIZE_BYTES`, `UPLOAD_TTL_HOURS`, and `UPLOAD_DIRECTORY` (see `backend/.env.example`). A local backend installation requires **FFmpeg**, including `ffprobe`, on `PATH`; the backend Docker image installs it automatically. Temporary storage is container-local by default, so mount a volume when it must survive container replacement during its configured lifetime.
