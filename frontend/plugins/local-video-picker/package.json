@@ -1,0 +1,1 @@
+{"name":"@smartclip/local-video-picker","version":"0.1.0","private":true,"main":"dist/plugin.js","types":"dist/plugin.d.ts","files":["android","dist"],"capacitor":{"android":{"src":"android"}},"peerDependencies":{"@capacitor/core":"^7.0.0"}}

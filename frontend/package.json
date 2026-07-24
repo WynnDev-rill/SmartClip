@@ -15,6 +15,7 @@
     "android:build:debug": "npm run android:sync && cd android && ./gradlew assembleDebug"
   },
   "dependencies": {
+    "@smartclip/local-video-picker": "file:plugins/local-video-picker",
     "@capacitor/core": "^7.4.3",
     "@radix-ui/react-slot": "^1.2.3",
     "class-variance-authority": "^0.7.1",

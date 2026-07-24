@@ -1,0 +1,8 @@
+ext { androidxActivityVersion = project.hasProperty('androidxActivityVersion') ? rootProject.ext.androidxActivityVersion : '1.9.2' }
+buildscript { repositories { google(); mavenCentral() }; dependencies { classpath 'com.android.tools.build:gradle:8.7.2' } }
+apply plugin: 'com.android.library'
+android { namespace 'com.wynndev.smartclip.videopicker'; compileSdk project.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 35
+  defaultConfig { minSdk project.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 23; targetSdk project.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 35 }
+}
+repositories { google(); mavenCentral() }
+dependencies { implementation project(':capacitor-android'); implementation "androidx.activity:activity:$androidxActivityVersion" }
