@@ -27,7 +27,7 @@ describe("vertical composition math", () => {
   });
   it("applies every preset", () => {
     expect(applyPreset("gameplay-full").mode).toBe("smart-crop");
-    expect(applyPreset("fit-blur").mode).toBe("fit-background");
+    expect(applyPreset("fit-background").mode).toBe("fit-background");
     expect(applyPreset("gameplay-top-facecam-bottom").facecamOutput.y).toBe(
       0.7,
     );

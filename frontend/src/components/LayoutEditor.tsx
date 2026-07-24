@@ -32,7 +32,7 @@ const presets: [Preset, string][] = [
   ["gameplay-top-facecam-bottom", "Gameplay top + facecam bottom"],
   ["facecam-top-gameplay-bottom", "Facecam top + gameplay bottom"],
   ["gameplay-facecam-corner", "Gameplay full + facecam corner"],
-  ["fit-blur", "Fit gameplay + blur"],
+  ["fit-background", "Fit gameplay + solid background"],
 ];
 
 export function LayoutEditor({ video, disabled, onChange }: Props) {
@@ -275,16 +275,11 @@ export function LayoutEditor({ video, disabled, onChange }: Props) {
             </>
           )}
           {layout.mode === "fit-background" && (
-            <Range
-              label="Background blur"
-              value={layout.blur}
-              min={0}
-              max={30}
-              onChange={(value) => setLayout({ ...layout, blur: value })}
-            />
+            <p className="text-xs text-muted-foreground">Android export currently uses a solid background. Blur is deferred until the renderer has a tested two-pass background effect.</p>
           )}
           {(layout.mode === "split" || layout.mode === "manual-overlay") && (
             <>
+              <p className="text-xs text-amber-300">Preview controls are available, but Android export for facecam compositing is not yet supported.</p>
               <label className="block text-sm">
                 Facecam position
                 <select

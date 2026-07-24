@@ -121,7 +121,7 @@ export const defaultLayout = (): Layout => ({
   focalY: 0.5,
   zoom: 1,
   cornerRadius: 12,
-  blur: 18,
+  blur: 0,
   facecamPosition: "top-right",
 });
 export type Preset =
@@ -129,7 +129,7 @@ export type Preset =
   | "gameplay-top-facecam-bottom"
   | "facecam-top-gameplay-bottom"
   | "gameplay-facecam-corner"
-  | "fit-blur";
+  | "fit-background";
 export function applyPreset(preset: Preset, current = defaultLayout()): Layout {
   const base = { ...current };
   if (preset === "gameplay-full")
@@ -138,8 +138,8 @@ export function applyPreset(preset: Preset, current = defaultLayout()): Layout {
       mode: "smart-crop",
       facecamOutput: { x: 0, y: 0, width: MIN_REGION, height: MIN_REGION },
     };
-  if (preset === "fit-blur")
-    return { ...base, mode: "fit-background", blur: 18 };
+  if (preset === "fit-background")
+    return { ...base, mode: "fit-background", blur: 0 };
   if (preset === "gameplay-top-facecam-bottom")
     return {
       ...base,

@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import androidx.media3.common.Effect;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.MimeTypes;
 import androidx.media3.effect.Crop;
 import androidx.media3.effect.Presentation;
 import androidx.media3.transformer.EditedMediaItem;
@@ -44,6 +45,7 @@ import androidx.media3.transformer.Effects;
 import androidx.media3.transformer.ExportException;
 import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
+import org.json.JSONObject;
 
 @CapacitorPlugin(name = "LocalVideoPicker")
 public class LocalVideoPickerPlugin extends Plugin {
@@ -129,11 +131,11 @@ public class LocalVideoPickerPlugin extends Plugin {
             startMs < 0 || endMs - startMs < 1000 || !((width == 720 && height == 1280) || (width == 1080 && height == 1920))) {
             call.reject("Invalid composition settings.", "INVALID_LAYOUT"); return;
         }
-        JSObject crop = layout.getJSObject("gameplayCrop");
+        JSONObject crop = layout.optJSONObject("gameplayCrop");
         if (!validRect(crop)) { call.reject("Gameplay crop must be a non-zero region inside the source.", "INVALID_CROP"); return; }
         String mode = layout.getString("mode", "smart-crop");
-        if (("split".equals(mode) || "manual-overlay".equals(mode)) && (!validRect(layout.getJSObject("facecamCrop")) || !validRect(layout.getJSObject("facecamOutput")))) {
-            call.reject("Facecam crop and output regions must stay inside their frames.", "INVALID_CROP"); return;
+        if (!"smart-crop".equals(mode) && !"fit-background".equals(mode)) {
+            call.reject("Split and manual facecam composition are not yet supported by the Android renderer.", "UNSUPPORTED_LAYOUT"); return;
         }
         long estimated = (long) width * height * Math.max(1, endMs - startMs) / 1000;
         if (new StatFs(getContext().getCacheDir().getAbsolutePath()).getAvailableBytes() < Math.max(150_000_000L, estimated)) {
@@ -146,8 +148,9 @@ public class LocalVideoPickerPlugin extends Plugin {
         MediaItem item = new MediaItem.Builder().setUri(Uri.parse(source)).setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(startMs).setEndPositionMs(endMs).build()).build();
         ArrayList<Effect> videoEffects = new ArrayList<>();
         // Crop uses normalized device coordinates. Presentation performs scale-to-fit/crop without stretching.
-        if (!"fit-background".equals(mode)) videoEffects.add(new Crop((float)(crop.getDouble("x") * 2 - 1), (float)((crop.getDouble("x") + crop.getDouble("width")) * 2 - 1), (float)(1 - (crop.getDouble("y") + crop.getDouble("height")) * 2), (float)(1 - crop.getDouble("y") * 2)));
-        videoEffects.add(Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP));
+        if (!"fit-background".equals(mode)) videoEffects.add(new Crop((float)(crop.optDouble("x") * 2 - 1), (float)((crop.optDouble("x") + crop.optDouble("width")) * 2 - 1), (float)(1 - (crop.optDouble("y") + crop.optDouble("height")) * 2), (float)(1 - crop.optDouble("y") * 2)));
+        int presentationLayout = "fit-background".equals(mode) ? Presentation.LAYOUT_SCALE_TO_FIT : Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP;
+        videoEffects.add(Presentation.createForWidthAndHeight(width, height, presentationLayout));
         EditedMediaItem edited = new EditedMediaItem.Builder(item).setEffects(new Effects(Collections.emptyList(), videoEffects)).build();
         Transformer.Listener listener = new Transformer.Listener() {
             @Override public void onCompleted(androidx.media3.transformer.Composition composition, ExportResult exportResult) {
@@ -160,17 +163,17 @@ public class LocalVideoPickerPlugin extends Plugin {
                 else call.reject(error.errorCode == ExportException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ? "The source codec is unsupported by this device." : "Local rendering failed. The device may be low on memory or not support this codec.", "RENDER_FAILED", error);
             }
         };
-        compositionTransformer = new Transformer.Builder(getContext()).addListener(listener).build();
+        compositionTransformer = new Transformer.Builder(getContext()).setVideoMimeType(MimeTypes.VIDEO_H264).setAudioMimeType(MimeTypes.AUDIO_AAC).addListener(listener).build();
         progress("rendering", 0);
         try { compositionTransformer.start(edited, temporary.getAbsolutePath()); }
         catch (SecurityException error) { temporary.delete(); call.reject("The selected source is no longer accessible.", "SOURCE_INACCESSIBLE", error); }
         catch (RuntimeException error) { temporary.delete(); call.reject("The device could not start the local encoder.", "ENCODER_UNAVAILABLE", error); }
     }
 
-    private boolean validRect(JSObject rect) {
+    private boolean validRect(JSONObject rect) {
         if (rect == null) return false;
-        Double x=rect.getDouble("x"), y=rect.getDouble("y"), w=rect.getDouble("width"), h=rect.getDouble("height");
-        return x != null && y != null && w != null && h != null && Double.isFinite(x) && Double.isFinite(y) && Double.isFinite(w) && Double.isFinite(h) && x >= 0 && y >= 0 && w >= .02 && h >= .02 && x+w <= 1.000001 && y+h <= 1.000001;
+        double x=rect.optDouble("x", Double.NaN), y=rect.optDouble("y", Double.NaN), w=rect.optDouble("width", Double.NaN), h=rect.optDouble("height", Double.NaN);
+        return Double.isFinite(x) && Double.isFinite(y) && Double.isFinite(w) && Double.isFinite(h) && x >= 0 && y >= 0 && w >= .02 && h >= .02 && x+w <= 1.000001 && y+h <= 1.000001;
     }
 
     private void publishComposition(PluginCall call, File temporary, long durationMs, int width, int height) {

@@ -1,6 +1,6 @@
 # SmartClip
 
-SmartClip is a private, local-first Android video editor. After selecting and trimming a local video, the vertical editor provides a safe 9:16 preview, normalized gameplay/facecam crop regions, Smart Crop, Fit with Background, Split, and Manual Overlay controls. Crop and preset calculations also run in a browser for UI testing, but browser export is intentionally unavailable and never calls a backend.
+SmartClip is a private, local-first Android video editor. After selecting and trimming a local video, the vertical editor provides a safe 9:16 preview, normalized gameplay/facecam crop regions, Smart Crop, Fit with Background, Split, and Manual Overlay controls. Crop and preset calculations also run in a browser for UI testing, but browser export is intentionally unavailable and never calls a backend. The current Android renderer supports Smart Crop and Fit with a solid background; blur and facecam compositing remain preview-only and return an explicit unsupported-layout error rather than a false-success export.
 
 ## Vertical output
 
@@ -12,7 +12,7 @@ See [the Android architecture](docs/android-architecture.md) for the crop coordi
 
 SmartClip is migrating from a server-backed web application to a private, Android local-first video highlight application. The goal is fully on-device processing without paid or AI APIs, cloud processing, or a runtime server requirement.
 
-> **Current status:** Android can select a local video, set a manual range, stream-copy supported media into a local MP4, and save it to the gallery entirely on-device. Automatic highlights and composition are not implemented.
+> **Current status:** Android can select a local video, set a manual range, stream-copy supported media into a local MP4, and save it to the gallery entirely on-device. Smart Crop and solid-background vertical composition are implemented; automatic highlights and facecam compositing are not.
 
 ## Architecture
 

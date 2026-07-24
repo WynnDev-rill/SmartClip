@@ -36,10 +36,10 @@ The editor models source and output rectangles as normalized top-left coordinate
 Modes and presets are:
 
 - **Smart Crop:** aspect-fill cover crop with horizontal/vertical focal point and 1–4× zoom.
-- **Fit with Background:** full gameplay is kept visible with a configurable background treatment.
-- **Split:** gameplay plus an independently cropped facecam at top, bottom, or one of four corners.
-- **Manual Overlay:** draggable/resizable facecam output with corner-radius control over the gameplay base.
-- Presets cover gameplay full, both top/bottom splits, corner facecam, and fit with blur.
+- **Fit with Background:** full gameplay is kept visible with a solid letterbox background. Blur is deferred because the minimal Media3 1.8 path does not yet implement a tested two-pass background.
+- **Split (preview only):** gameplay plus an independently cropped facecam at top, bottom, or one of four corners. Native export rejects this mode explicitly.
+- **Manual Overlay (preview only):** draggable/resizable facecam output with corner-radius control over the gameplay base. Native export rejects this mode explicitly.
+- Presets cover gameplay full, both top/bottom splits, corner facecam, and fit with a solid background.
 
 Auto quality chooses `1080×1920` only when source detail and reported device memory make that practical; otherwise it selects `720×1280`. Both explicit sizes are available and upscaling is warned about. Encoder availability, thermal throttling, long render time, temporary-space requirements, and device-specific codec limits remain expected constraints. The bridge reports preparing, rendering, saving, completed, failed, and cancelled states; cancellation stops Transformer or copy work and pending gallery entries are removed. Source permission loss, unsupported decode, storage pressure, and rendering failures have distinct user-facing errors. Export currently runs while the app process remains alive; Android process death/background eviction cancels the in-process job and cache cleanup occurs on the next system cache sweep.
 
@@ -81,7 +81,7 @@ The first Android build deliberately disables server-backed upload inside Capaci
 2. **Local media access:** system picker, persisted URI access when necessary, native metadata contract, cancellation, and temporary-file policy.
 3. **Processing engine:** select and package a license-compatible local FFmpeg implementation; probe and transcode on supported ABIs with no network.
 4. **Analysis:** implement deterministic scene/audio signals and highlight scoring with fixtures and performance budgets.
-5. **Clip workflow:** manual trim and 9:16 facecam/gameplay composition controls, cancellation, and MediaStore export are complete.
+5. **Clip workflow:** manual trim, Smart Crop/Fit export, 9:16 facecam/gameplay preview controls, cancellation, and MediaStore publishing are complete. Multi-input facecam rendering and blur remain renderer work.
 6. **Next step:** automatic highlight candidate generation using deterministic local scene/audio signals (no viral-confidence feature yet).
 7. **Hardening:** lifecycle recovery, instrumentation/device matrix, accessibility, performance, storage pressure, and privacy review.
 8. **Retirement:** remove hosted API requirements and eventually the transitional backend/deployment after all required functionality is local.
