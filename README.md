@@ -66,7 +66,7 @@ The web application is served at <http://localhost:3000>; the API remains direct
 ## Quality checks
 
 ```bash
-cd frontend && npm run build
+cd frontend && npm run lint && npm run typecheck && npm run build
 cd backend && ruff check . && pytest
 ```
 
