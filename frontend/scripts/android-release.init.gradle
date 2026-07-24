@@ -1,0 +1,29 @@
+// Applied only by the signed-release workflow to the Capacitor-generated project.
+gradle.beforeProject { project ->
+    project.pluginManager.withPlugin('com.android.application') {
+        if (project.path != ':app') {
+            return
+        }
+
+        def required = ['KEYSTORE_PATH', 'ANDROID_KEYSTORE_PASSWORD', 'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD']
+        def missing = required.findAll { !System.getenv(it) }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Missing release-signing environment variable(s): ${missing.join(', ')}")
+        }
+
+        def versionProperties = new Properties()
+        project.file('../../android-version.properties').withInputStream {
+            versionProperties.load(it)
+        }
+
+        project.android.defaultConfig.versionCode = versionProperties.getProperty('VERSION_CODE').toInteger()
+        project.android.defaultConfig.versionName = versionProperties.getProperty('VERSION_NAME')
+
+        def releaseSigning = project.android.signingConfigs.create('smartClipRelease')
+        releaseSigning.storeFile = project.file(System.getenv('KEYSTORE_PATH'))
+        releaseSigning.storePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+        releaseSigning.keyAlias = System.getenv('ANDROID_KEY_ALIAS')
+        releaseSigning.keyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+        project.android.buildTypes.release.signingConfig = releaseSigning
+    }
+}

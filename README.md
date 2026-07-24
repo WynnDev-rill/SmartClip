@@ -63,6 +63,41 @@ frontend/android/app/build/outputs/apk/debug/app-debug.apk
 
 The **Android debug APK** workflow validates every pull request and can be started from **Actions → Android debug APK → Run workflow** using `workflow_dispatch`. After the job succeeds, open its run summary and download the **SmartClip-debug-apk** artifact. It contains the unsigned-for-release debug APK at the path above; no signing key or release is created.
 
+## Persistent signed Android releases
+
+Android accepts an APK as an update only when its application ID and signing certificate match the installed app and its `versionCode` is higher. SmartClip keeps the ID `com.wynndev.smartclip`. The **Android signed release APK** workflow uses one permanent, repository-secret keystore; it never creates a key. The temporary decoded copy is stored in the runner's temporary directory, removed by an `if: always()` cleanup step, and is never uploaded. The artifact is named **SmartClip-signed-apk** and currently contains `SmartClip-v0.2.0.apk`.
+
+### One-time signing setup (Android/Termux friendly)
+
+Treat the keystore as irreplaceable: losing it means existing installations cannot be updated.
+
+1. In Termux on Android, install a Java key tool with `pkg update && pkg install openjdk-21`. (`keytool` from any trusted Java 21 installation on another OS also works.)
+2. Choose a stable alias, for example `smartclip-release`. The alias is a label, not a secret, but it must match the stored key.
+3. Create the key once. Replace only the example path/alias; enter strong passwords interactively when prompted—do not put them in shell history:
+   ```bash
+   keytool -genkeypair -v -keystore "$HOME/smartclip-release.jks" \
+     -alias smartclip-release -keyalg RSA -keysize 4096 -validity 10000
+   ```
+4. Encode it as one Base64 line without printing it. In Termux:
+   ```bash
+   base64 -w 0 "$HOME/smartclip-release.jks" > "$HOME/smartclip-release.jks.base64"
+   ```
+   If the local `base64` lacks `-w`, use `base64 "$HOME/smartclip-release.jks" | tr -d '\n' > "$HOME/smartclip-release.jks.base64"`.
+5. In GitHub mobile web, open the repository → **Settings → Secrets and variables → Actions → New repository secret**. Add exactly these four secrets:
+   - `ANDROID_KEYSTORE_BASE64`: the entire contents of the `.base64` file
+   - `ANDROID_KEYSTORE_PASSWORD`: the keystore password entered in step 3
+   - `ANDROID_KEY_ALIAS`: the alias chosen in step 2
+   - `ANDROID_KEY_PASSWORD`: the key password entered in step 3
+6. Securely delete the Base64 text file after upload; it is an unencrypted copy of the keystore. Keep at least two encrypted backups of the original `.jks` in separate trusted locations, plus the alias and passwords in a password manager. Never commit or send them in chat.
+
+### Version and build procedure
+
+Before every installable update, edit `frontend/android-version.properties`: increase `VERSION_CODE` (an integer that must always rise) and set `VERSION_NAME` (the user-facing version, currently `0.2.0`). Commit that change. For a tag build, create a matching tag such as `v0.2.0`; a mismatch fails clearly.
+
+Trigger a build from Android using GitHub mobile web: open **Actions → Android signed release APK → Run workflow → Run workflow**. Alternatively, push the matching `v0.2.0` tag. After the run succeeds, open its summary → **Artifacts** → **SmartClip-signed-apk**, download and unzip it, then open `SmartClip-v0.2.0.apk` on Android. Allow installation from that browser/files app if Android asks. Install over the existing SmartClip app—do not uninstall it, because uninstalling removes app data. If Android reports a certificate mismatch, the installed APK was signed by a different key; only an APK signed with that original certificate can update it.
+
+The four secrets must be added manually before the first signed run. Repository collaborators and workflows cannot recover their values. Every future release must retain the same secrets/keystore; only the version values and application code should change.
+
 ## Quality checks
 
 ```bash
