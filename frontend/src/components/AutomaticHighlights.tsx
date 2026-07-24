@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { analyzeHighlights, type DetectionMode, type DurationMode, type HighlightCandidate } from "@/lib/highlights";
 import { NativeEditor } from "@/lib/trim";
 import { SegmentedControl, StatusBadge } from "./AppShell";
+import { useI18n } from "@/i18n";
 
 const clock = (ms: number) => `${Math.floor(ms / 60_000)}:${Math.floor(ms % 60_000 / 1000).toString().padStart(2, "0")}`;
 export interface AutomaticHighlightsProps {
@@ -12,6 +13,7 @@ export interface AutomaticHighlightsProps {
 }
 
 export function AutomaticHighlights({ uri, durationSeconds, native, disabled, onAdjust, onExport }: AutomaticHighlightsProps) {
+  const { t } = useI18n();
   const [durationMode, setDurationMode] = useState<DurationMode>("auto");
   const [detectionMode, setDetectionMode] = useState<DetectionMode>("balanced");
   const [phase, setPhase] = useState("idle");
@@ -43,14 +45,14 @@ export function AutomaticHighlights({ uri, durationSeconds, native, disabled, on
       catch { setStatuses((s) => ({ ...s, [candidate.id]: "Failed" })); }
     }
   };
-  return <section aria-label="Automatic Highlights" className="mt-5 rounded-2xl border border-violet-400/20 bg-black/20 p-4 sm:p-5">
-    <h3 className="font-semibold">Automatic Highlights</h3>
+  return <section aria-label={t("automaticHighlights")} className="mt-5 rounded-2xl border border-violet-400/20 bg-black/20 p-4 sm:p-5">
+    <h3 className="font-semibold">{t("automaticHighlights")}</h3>
     <p className="mt-1 text-xs text-muted-foreground">Deterministic, on-device activity analysis. “Viral Confidence” is a heuristic highlight score—not a virality prediction.</p>
     <div className="mt-4 grid gap-5">
-      <SegmentedControl<DurationMode> label="Target duration" value={durationMode} onChange={setDurationMode} options={[["30-plus","30+ sec"],["60-plus","60+ sec"],["auto","Auto"]]}/>
-      <SegmentedControl<DetectionMode> label="Detection mode" value={detectionMode} onChange={setDetectionMode} options={[["conservative","Conservative"],["balanced","Balanced"],["aggressive","Aggressive"]]}/>
+      <SegmentedControl<DurationMode> label={t("targetDuration")} value={durationMode} onChange={setDurationMode} options={[["30-plus","30+ sec"],["60-plus","60+ sec"],["auto","Auto"]]}/>
+      <SegmentedControl<DetectionMode> label={t("detectionMode")} value={detectionMode} onChange={setDetectionMode} options={[["conservative","Conservative"],["balanced","Balanced"],["aggressive","Aggressive"]]}/>
     </div>
-    <div className="mt-4 flex flex-wrap gap-2"><Button disabled={disabled || !["idle", "completed", "failed", "cancelled"].includes(phase)} onClick={analyze}>Analyze Video</Button><Button variant="outline" disabled={["idle", "completed", "failed", "cancelled"].includes(phase)} onClick={() => NativeEditor.cancelAnalysis()}>Cancel Analysis</Button></div>
+    <div className="mt-4 flex flex-wrap gap-2"><Button disabled={disabled || !["idle", "completed", "failed", "cancelled"].includes(phase)} onClick={analyze}>{t("analyzeVideo")}</Button><Button variant="outline" disabled={["idle", "completed", "failed", "cancelled"].includes(phase)} onClick={() => NativeEditor.cancelAnalysis()}>Cancel Analysis</Button></div>
     {phase !== "idle" && <p aria-live="polite" className="mt-3 text-sm capitalize">Analysis: {phase}</p>}
     {message && <p className="mt-3 text-sm text-amber-300">{message}</p>}
     {candidates.length > 0 && <><div className="mt-5 flex flex-wrap gap-2"><Button variant="outline" onClick={() => setSelected(new Set(candidates.map((c) => c.id)))}>Select all</Button><Button variant="outline" onClick={() => setSelected(new Set())}>Clear selection</Button><Button disabled={!chosen.length} onClick={exportMany}>Export selected</Button></div>
