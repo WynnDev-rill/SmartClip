@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Check, Clapperboard, Play, Scissors, Sparkles, Wifi, WifiOff } from "lucide-react";
+import { ArrowRight, Check, Clapperboard, Scissors, Sparkles, Wifi, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { VideoUpload } from "@/components/VideoUpload";
