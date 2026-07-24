@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LayoutEditor } from "@/components/LayoutEditor";
+import { AutomaticHighlights } from "@/components/AutomaticHighlights";
+import type { HighlightCandidate } from "@/lib/highlights";
 import {
   coverCrop,
   defaultLayout,
@@ -213,6 +215,13 @@ export default function App() {
       );
     } finally {
       await listener.remove();
+    }
+  };
+  const exportCandidates = async (candidates: HighlightCandidate[]) => {
+    if (!video || !native) throw new Error("Candidate export is Android-only.");
+    const output = selectQuality(quality, video.width, video.height, (navigator as Navigator & { deviceMemory?: number }).deviceMemory);
+    for (const candidate of candidates) {
+      await NativeEditor.exportComposition({ uri: video.uri, startMs: candidate.startMs, endMs: candidate.endMs, layout: { ...layout, gameplayCrop: layout.mode === "smart-crop" ? coverCrop(video.width, video.height, output.width, output.height, layout.focalX, layout.focalY, layout.zoom) : layout.gameplayCrop }, quality, outputWidth: output.width, outputHeight: output.height });
     }
   };
   const busy = ["preparing", "trimming", "rendering", "saving"].includes(state);
@@ -450,6 +459,9 @@ export default function App() {
                   </div>
                 )}
               </section>
+              <AutomaticHighlights uri={video.uri} durationSeconds={video.duration} native={native} disabled={busy}
+                onAdjust={(candidate) => { setRange({ start: candidate.startMs / 1000, end: candidate.endMs / 1000 }); document.querySelector('[aria-label="Trim editor"]')?.scrollIntoView({ behavior: "smooth" }); }}
+                onExport={exportCandidates} />
               <LayoutEditor
                 video={video}
                 disabled={busy}
