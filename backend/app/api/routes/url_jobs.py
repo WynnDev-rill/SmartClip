@@ -21,6 +21,17 @@ from app.security import Auth, RateLimit, validate_url
 router = APIRouter(prefix="/api", dependencies=[Auth, RateLimit])
 logger = logging.getLogger(__name__)
 
+INSPECTION_STATUS = {
+    "unsupported_url": 422,
+    "video_unavailable": 422,
+    "private_video": 422,
+    "login_required": 422,
+    "age_restricted": 422,
+    "geo_restricted": 422,
+    "inspection_timeout": 504,
+}
+DEFAULT_INSPECTION_STATUS = 502
+
 
 class URLRequest(BaseModel):
     url: AnyHttpUrl
@@ -49,7 +60,7 @@ def inspect_url(body: URLRequest) -> dict:
         outcome = inspect_metadata(url, request_id, youtube="youtube.com" in url)
         data = outcome.metadata
     except InspectionFailure as exc:
-        status = 504 if exc.code == "inspection_timeout" else 502
+        status = INSPECTION_STATUS.get(exc.code, DEFAULT_INSPECTION_STATUS)
         raise HTTPException(
             status, detail={"code": exc.code, "message": inspection_message(exc.code)}
         ) from exc

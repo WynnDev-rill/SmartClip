@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import inspection
+from app import jobs as jobs_module
 from app.api.routes import url_jobs
 from app.core.config import settings
 from app.inspection import InspectionFailure, inspect_metadata
@@ -116,26 +117,27 @@ def test_youtube_urls_are_normalized_without_tracking(url):
 
 
 @pytest.mark.parametrize(
-    ("stderr", "code"),
+    ("stderr", "code", "status"),
     [
         (
             "ERROR: Sign in to confirm you're not a bot. This helps protect our community",
             "youtube_bot_challenge",
+            502,
         ),
-        ("ERROR: player-client challenge", "youtube_client_blocked"),
-        ("ERROR: PO Token required", "po_token_required"),
-        ("ERROR: Private video", "private_video"),
-        ("ERROR: Video unavailable", "video_unavailable"),
-        ("ERROR: Unsupported URL", "unsupported_url"),
-        ("ERROR: Sign in to confirm your age", "age_restricted"),
-        ("ERROR: login required", "login_required"),
-        ("ERROR: not available in your country", "geo_restricted"),
-        ("ERROR: signature extraction failed", "extractor_outdated"),
-        ("ERROR: Unable to download webpage", "network_failure"),
-        ("ERROR: extractor crashed", "extractor_failure"),
+        ("ERROR: player-client challenge", "youtube_client_blocked", 502),
+        ("ERROR: PO Token required", "po_token_required", 502),
+        ("ERROR: Private video", "private_video", 422),
+        ("ERROR: Video unavailable", "video_unavailable", 422),
+        ("ERROR: Unsupported URL", "unsupported_url", 422),
+        ("ERROR: Sign in to confirm your age", "age_restricted", 422),
+        ("ERROR: login required", "login_required", 422),
+        ("ERROR: not available in your country", "geo_restricted", 422),
+        ("ERROR: signature extraction failed", "extractor_outdated", 502),
+        ("ERROR: Unable to download webpage", "network_failure", 502),
+        ("ERROR: extractor crashed", "extractor_failure", 502),
     ],
 )
-def test_inspection_failure_codes(monkeypatch, stderr, code):
+def test_inspection_failure_codes_and_statuses(monkeypatch, stderr, code, status):
     monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
 
     def fail(*args, **kwargs):
@@ -146,6 +148,7 @@ def test_inspection_failure_codes(monkeypatch, stderr, code):
         response = client.post(
             "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
         )
+    assert response.status_code == status
     assert response.json()["detail"]["code"] == code
 
 
@@ -343,3 +346,63 @@ def test_progress_normalization_is_monotonic_and_tracks_terminal_states(tmp_path
     assert job.completed_items == 0 and job.total_items == 0
     job.update_progress("cancelled", 101, "Cancelled")
     assert job.phase == "cancelled" and job.progress_percent == 100
+
+
+def processing_request():
+    return {
+        "url": "https://example.com/video",
+        "outputQuality": "720p",
+        "maximumCandidates": 1,
+        "detectionMode": "balanced",
+        "layoutMode": "smart-crop",
+    }
+
+
+def test_cancel_before_inspection_never_starts_inspection_or_download(monkeypatch, tmp_path):
+    directory = tmp_path / "cancel-before"
+    directory.mkdir()
+    job = Job("cancel-before", processing_request(), directory)
+    job.cancelled.set()
+    inspect = Mock()
+    execute = Mock()
+    monkeypatch.setattr(jobs_module, "inspect_metadata", inspect)
+    monkeypatch.setattr(manager, "_execute", execute)
+    manager._run(job)
+    inspect.assert_not_called()
+    execute.assert_not_called()
+    assert job.state == "cancelled" and job.completed_at and job.updated_at == job.completed_at
+    assert not directory.exists()
+
+
+@pytest.mark.parametrize("timing", ["during", "immediately_after"])
+def test_cancel_while_inspecting_never_starts_download(monkeypatch, tmp_path, timing):
+    directory = tmp_path / timing
+    directory.mkdir()
+    job = Job(timing, processing_request(), directory)
+
+    def inspect(*args, **kwargs):
+        # Represents cancellation while subprocess.run is active or just before it returns.
+        job.cancelled.set()
+
+    execute = Mock()
+    monkeypatch.setattr(jobs_module, "inspect_metadata", inspect)
+    monkeypatch.setattr(manager, "_execute", execute)
+    manager._run(job)
+    execute.assert_not_called()
+    assert job.state == "cancelled" and job.completed_at is not None
+    assert not directory.exists()
+
+
+def test_cancelled_job_frees_worker_and_repeated_cancel_is_safe(monkeypatch, tmp_path):
+    directory = tmp_path / "cancelled"
+    directory.mkdir()
+    job = Job("cancelled", processing_request(), directory)
+    job.cancelled.set()
+    manager._run(job)
+    manager.jobs[job.id] = job
+    manager.cancel(job)
+    manager.cancel(job)
+    monkeypatch.setattr(manager.executor, "submit", Mock())
+    replacement = manager.create(processing_request())
+    assert job.state == "cancelled"
+    assert replacement.state == "queued"

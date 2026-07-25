@@ -102,15 +102,24 @@ class JobManager:
         # Popen is cleared; use output existence as success for mocked/test and real commands.
         return subprocess.CompletedProcess(args, returncode, stdout, stderr)
 
+    @staticmethod
+    def _check_cancelled(job: Job) -> None:
+        if job.cancelled.is_set():
+            raise InterruptedError
+
     def _run(self, job: Job) -> None:
         try:
             job.started_at = datetime.now(UTC)
+            self._check_cancelled(job)
             job.update_progress("inspecting", 5, "Inspecting public source metadata.")
             inspect_metadata(
                 job.request["url"], job.id[:16], youtube="youtube.com" in job.request["url"]
             )
+            self._check_cancelled(job)
             job.update_progress("downloading", 15, "Downloading source video.")
             height = 1080 if job.request["outputQuality"] == "1080p" else 720
+            # Keep this checkpoint adjacent to process creation. No download may start after cancel.
+            self._check_cancelled(job)
             self._execute(
                 job, ytdlp_download_command(job.request["url"], job.directory, height), 1800
             )
@@ -118,7 +127,9 @@ class JobManager:
             if not sources:
                 raise RuntimeError("download")
             source = sources[0]
+            self._check_cancelled(job)
             job.update_progress("probing", 35, "Probing downloaded media.")
+            self._check_cancelled(job)
             job.update_progress("analyzing", 45, "Analyzing audio and visual activity.")
             # Lightweight deterministic windows; production extraction is isolated behind ffmpeg.
             duration = min(30.0, settings.max_output_duration_seconds)
@@ -131,12 +142,13 @@ class JobManager:
             candidates = analyze(
                 signals, job.request["detectionMode"], limit, settings.max_output_duration_seconds
             )
+            self._check_cancelled(job)
             job.update_progress("selecting_candidates", 60, "Selecting highlight candidates.")
+            self._check_cancelled(job)
             job.update_progress("rendering", 65, "Rendering vertical clips.", 0, len(candidates))
             width, out_height = (1080, 1920) if height == 1080 else (720, 1280)
             for index, candidate in enumerate(candidates, 1):
-                if job.cancelled.is_set():
-                    raise InterruptedError
+                self._check_cancelled(job)
                 output = job.directory / f"candidate-{index}.mp4"
                 self._execute(
                     job,
@@ -175,10 +187,12 @@ class JobManager:
                     index,
                     len(candidates),
                 )
+            self._check_cancelled(job)
             job.update_progress(
                 "saving", 95, "Saving temporary results.", len(candidates), len(candidates)
             )
             source.unlink(missing_ok=True)
+            self._check_cancelled(job)
             job.update_progress(
                 "completed",
                 100,
