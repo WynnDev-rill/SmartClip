@@ -152,6 +152,20 @@ def test_inspection_timeout_has_distinct_code(monkeypatch):
     assert response.json()["detail"]["code"] == "inspection_timeout"
 
 
+def test_malformed_inspection_json_has_distinct_code(monkeypatch):
+    monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
+    monkeypatch.setattr(url_jobs.subprocess, "run", lambda *a, **k: Mock(stdout="not-json"))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
+        )
+    assert response.status_code == 502
+    assert response.json()["detail"] == {
+        "code": "malformed_metadata",
+        "message": "The extractor returned malformed metadata.",
+    }
+
+
 def test_option_validation():
     with TestClient(app) as client:
         response = client.post(
@@ -222,15 +236,30 @@ def test_one_active_job_and_cancellation(monkeypatch, tmp_path):
     assert response.status_code == 200 and active.cancelled.is_set()
 
 
-def test_error_is_sanitized(monkeypatch):
+@pytest.mark.parametrize(
+    "private_detail",
+    [
+        "signed-secret-url",
+        "https://cdn.example/video?token=secret",
+        "Authorization: Bearer private-api-token",
+        "Cookie: session=private-cookie",
+        "ordinary runtime failure",
+    ],
+)
+def test_error_is_sanitized(monkeypatch, private_detail):
     monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
 
     def fail(*a, **k):
-        raise RuntimeError("signed-secret-url")
+        raise RuntimeError(private_detail)
 
     monkeypatch.setattr(url_jobs.subprocess, "run", fail)
     with TestClient(app) as client:
-        body = client.post(
+        response = client.post(
             "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
-        ).json()
-    assert "signed-secret-url" not in str(body)
+        )
+    assert response.status_code == 502
+    assert response.json()["detail"] == {
+        "code": "extractor_failure",
+        "message": "The extractor could not inspect this video.",
+    }
+    assert private_detail not in response.text

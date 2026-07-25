@@ -1,4 +1,5 @@
 import json
+import logging
 import subprocess
 from pathlib import Path
 from typing import Literal
@@ -10,9 +11,10 @@ from pydantic import AnyHttpUrl, BaseModel, Field
 from app.core.config import settings
 from app.jobs import Job, manager
 from app.media import normalize_video_url, ytdlp_inspect_command
-from app.security import Auth, RateLimit, safe_error, validate_url
+from app.security import Auth, RateLimit, validate_url
 
 router = APIRouter(prefix="/api", dependencies=[Auth, RateLimit])
+logger = logging.getLogger(__name__)
 
 
 class URLRequest(BaseModel):
@@ -61,7 +63,24 @@ def inspect_url(body: URLRequest) -> dict:
         ) from exc
     except (OSError, subprocess.SubprocessError) as exc:
         raise HTTPException(
-            502, detail={"code": "extractor_failure", "message": safe_error(exc)}
+            502,
+            detail={
+                "code": "extractor_failure",
+                "message": inspection_message("extractor_failure"),
+            },
+        ) from exc
+    except Exception as exc:
+        # Never interpolate the exception: it may contain signed URLs, headers, or cookies.
+        logger.warning(
+            "Unexpected inspection failure exception_type=%s code=extractor_failure",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            502,
+            detail={
+                "code": "extractor_failure",
+                "message": inspection_message("extractor_failure"),
+            },
         ) from exc
     if (
         not isinstance(data, dict)
@@ -147,6 +166,7 @@ def inspection_message(code: str) -> str:
         "extractor_outdated": "The installed extractor must be updated.",
         "network_failure": "The extractor could not reach the video host.",
         "malformed_metadata": "The extractor returned malformed metadata.",
+        "extractor_failure": "The extractor could not inspect this video.",
     }.get(code, "The extractor could not inspect this video.")
 
 
