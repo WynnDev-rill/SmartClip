@@ -18,7 +18,10 @@ export function validateTrim(range: TrimRange, sourceDuration: number): string |
 export function presetRange(seconds: number | "full", duration: number): TrimRange {
   return { start: 0, end: seconds === "full" ? duration : Math.min(seconds, duration) };
 }
+export function trimPayload(range: TrimRange) {
+  return { startMs: Math.round(range.start * 1000), endMs: Math.round(range.end * 1000) };
+}
 
 export async function exportNativeClip(uri: string, range: TrimRange) {
-  return NativeEditor.exportClip({ uri, startMs: Math.round(range.start * 1000), endMs: Math.round(range.end * 1000) });
+  return NativeEditor.exportClip({ uri, ...trimPayload(range) });
 }

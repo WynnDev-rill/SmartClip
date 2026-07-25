@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -10,10 +11,21 @@ from app.api.routes import url_jobs
 from app.core.config import settings
 from app.jobs import Job, manager
 from app.main import app
-from app.media import Signal, analyze, render_command, ytdlp_download_command, ytdlp_inspect_command
+from app.media import (
+    Signal,
+    analyze,
+    normalize_video_url,
+    render_command,
+    ytdlp_download_command,
+    ytdlp_inspect_command,
+)
 from app.security import token_matches, validate_url
 
 TOKEN = "test-secret"
+
+
+def test_pinned_ytdlp_dependency_is_installed():
+    assert version("yt-dlp") == "2026.7.4"
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +99,73 @@ def test_inspect_safe_metadata(monkeypatch):
     assert "formats" not in response.json()
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/watch?v=3iPA35AKI0E",
+        "https://youtu.be/3iPA35AKI0E?si=BJrRfwEn1aa4SeQS",
+        "https://youtube.com/shorts/3iPA35AKI0E?si=tracking",
+    ],
+)
+def test_youtube_urls_are_normalized_without_tracking(url):
+    assert normalize_video_url(url) == "https://www.youtube.com/watch?v=3iPA35AKI0E"
+
+
+@pytest.mark.parametrize(
+    ("stderr", "code"),
+    [
+        ("ERROR: Private video", "private_video"),
+        ("ERROR: Video unavailable", "video_unavailable"),
+        ("ERROR: Unsupported URL", "unsupported_url"),
+        ("ERROR: Sign in to confirm your age", "login_required"),
+        ("ERROR: signature extraction failed", "extractor_outdated"),
+        ("ERROR: Unable to download webpage", "network_failure"),
+        ("ERROR: extractor crashed", "extractor_failure"),
+    ],
+)
+def test_inspection_failure_codes(monkeypatch, stderr, code):
+    monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
+
+    def fail(*args, **kwargs):
+        raise url_jobs.subprocess.CalledProcessError(1, args[0], stderr=stderr)
+
+    monkeypatch.setattr(url_jobs.subprocess, "run", fail)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
+        )
+    assert response.json()["detail"]["code"] == code
+
+
+def test_inspection_timeout_has_distinct_code(monkeypatch):
+    monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
+    monkeypatch.setattr(
+        url_jobs.subprocess,
+        "run",
+        lambda *a, **k: (_ for _ in ()).throw(url_jobs.subprocess.TimeoutExpired(a[0], 60)),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
+        )
+    assert response.status_code == 504
+    assert response.json()["detail"]["code"] == "inspection_timeout"
+
+
+def test_malformed_inspection_json_has_distinct_code(monkeypatch):
+    monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
+    monkeypatch.setattr(url_jobs.subprocess, "run", lambda *a, **k: Mock(stdout="not-json"))
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
+        )
+    assert response.status_code == 502
+    assert response.json()["detail"] == {
+        "code": "malformed_metadata",
+        "message": "The extractor returned malformed metadata.",
+    }
+
+
 def test_option_validation():
     with TestClient(app) as client:
         response = client.post(
@@ -157,15 +236,30 @@ def test_one_active_job_and_cancellation(monkeypatch, tmp_path):
     assert response.status_code == 200 and active.cancelled.is_set()
 
 
-def test_error_is_sanitized(monkeypatch):
+@pytest.mark.parametrize(
+    "private_detail",
+    [
+        "signed-secret-url",
+        "https://cdn.example/video?token=secret",
+        "Authorization: Bearer private-api-token",
+        "Cookie: session=private-cookie",
+        "ordinary runtime failure",
+    ],
+)
+def test_error_is_sanitized(monkeypatch, private_detail):
     monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
 
     def fail(*a, **k):
-        raise RuntimeError("signed-secret-url")
+        raise RuntimeError(private_detail)
 
     monkeypatch.setattr(url_jobs.subprocess, "run", fail)
     with TestClient(app) as client:
-        body = client.post(
+        response = client.post(
             "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
-        ).json()
-    assert "signed-secret-url" not in str(body)
+        )
+    assert response.status_code == 502
+    assert response.json()["detail"] == {
+        "code": "extractor_failure",
+        "message": "The extractor could not inspect this video.",
+    }
+    assert private_detail not in response.text

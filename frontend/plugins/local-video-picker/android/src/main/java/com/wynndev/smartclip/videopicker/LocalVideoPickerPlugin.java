@@ -16,6 +16,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.os.StatFs;
+import android.util.Log;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import androidx.activity.result.ActivityResult;
@@ -59,6 +60,7 @@ import com.getcapacitor.JSArray;
 
 @CapacitorPlugin(name = "LocalVideoPicker")
 public class LocalVideoPickerPlugin extends Plugin {
+    private static final String TAG = "SmartClipExport";
     private static final int DEFAULT_ANALYSIS_INTERVAL_MS = 1_000;
     private static final int MINIMUM_ANALYSIS_INTERVAL_MS = 500;
     private static final long DEFAULT_MAX_ANALYSIS_DURATION_MS = 3_600_000L;
@@ -393,11 +395,11 @@ public class LocalVideoPickerPlugin extends Plugin {
 
     @PluginMethod
     public void exportClip(PluginCall call) {
-        String source = call.getString("uri"); Long startMs = call.getLong("startMs"); Long endMs = call.getLong("endMs");
-        if (source == null || startMs == null || endMs == null || startMs < 0 || endMs - startMs < 1000) { call.reject("Invalid trim range.", "INVALID_RANGE"); return; }
+        String source = call.getString("uri"); Long startMs = numberAsLong(call, "startMs"); Long endMs = numberAsLong(call, "endMs");
+        TrimRange normalized = normalizeTrim(call, source, startMs, endMs); if (normalized == null) return;
         cancelled.set(false);
         try {
-            exportExecutor.execute(() -> runExport(call, source, startMs, endMs));
+            exportExecutor.execute(() -> runExport(call, source, normalized.startMs, normalized.endMs));
         } catch (RejectedExecutionException error) {
             call.reject("The editor is shutting down.", "EDITOR_UNAVAILABLE", error);
         }
@@ -406,10 +408,10 @@ public class LocalVideoPickerPlugin extends Plugin {
     /** Hardware-accelerated decode/effect/encode path. Unlike exportClip, composition cannot stream-copy. */
     @PluginMethod
     public void exportComposition(PluginCall call) {
-        String source = call.getString("uri"); Long startMs = call.getLong("startMs"); Long endMs = call.getLong("endMs");
+        String source = call.getString("uri"); Long startMs = numberAsLong(call, "startMs"); Long endMs = numberAsLong(call, "endMs");
         Integer width = call.getInt("outputWidth"); Integer height = call.getInt("outputHeight"); JSObject layout = call.getObject("layout");
-        if (source == null || source.isEmpty()) { call.reject("The source URI is missing.", "INVALID_SOURCE"); return; }
-        if (startMs == null || endMs == null || startMs < 0 || endMs - startMs < 1000) { call.reject("Trim start and end must define at least one second.", "INVALID_TRIM"); return; }
+        TrimRange normalized = normalizeTrim(call, source, startMs, endMs); if (normalized == null) return;
+        final long effectiveStartMs = normalized.startMs; final long effectiveEndMs = normalized.endMs;
         if (width == null || width <= 0) { call.reject("Output width must be a positive number.", "INVALID_OUTPUT_WIDTH"); return; }
         if (height == null || height <= 0) { call.reject("Output height must be a positive number.", "INVALID_OUTPUT_HEIGHT"); return; }
         if (!((width == 720 && height == 1280) || (width == 1080 && height == 1920))) { call.reject("Output dimensions must be 720×1280 or 1080×1920.", "INVALID_OUTPUT_SIZE"); return; }
@@ -420,7 +422,7 @@ public class LocalVideoPickerPlugin extends Plugin {
             call.reject("Split and manual facecam composition are not yet supported by the Android renderer.", "UNSUPPORTED_LAYOUT"); return;
         }
         if (!"fit-background".equals(mode) && !validRect(crop)) { call.reject("Gameplay crop must be a non-zero region inside the source.", "INVALID_GAMEPLAY_CROP"); return; }
-        long estimated = (long) width * height * Math.max(1, endMs - startMs) / 1000;
+        long estimated = (long) width * height * Math.max(1, effectiveEndMs - effectiveStartMs) / 1000;
         if (new StatFs(getContext().getCacheDir().getAbsolutePath()).getAvailableBytes() < Math.max(150_000_000L, estimated)) {
             call.reject("Insufficient storage for a local composition.", "INSUFFICIENT_STORAGE"); return;
         }
@@ -428,7 +430,7 @@ public class LocalVideoPickerPlugin extends Plugin {
         File temporary;
         try { temporary = File.createTempFile("smartclip-vertical-", ".mp4", getContext().getCacheDir()); temporary.delete(); }
         catch (Exception error) { call.reject("Unable to prepare local output storage.", "INSUFFICIENT_STORAGE", error); return; }
-        MediaItem item = new MediaItem.Builder().setUri(Uri.parse(source)).setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(startMs).setEndPositionMs(endMs).build()).build();
+        MediaItem item = new MediaItem.Builder().setUri(Uri.parse(source)).setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder().setStartPositionMs(effectiveStartMs).setEndPositionMs(effectiveEndMs).build()).build();
         ArrayList<Effect> videoEffects = new ArrayList<>();
         // Crop uses normalized device coordinates. Presentation performs scale-to-fit/crop without stretching.
         if (!"fit-background".equals(mode)) videoEffects.add(new Crop((float)(crop.optDouble("x") * 2 - 1), (float)((crop.optDouble("x") + crop.optDouble("width")) * 2 - 1), (float)(1 - (crop.optDouble("y") + crop.optDouble("height")) * 2), (float)(1 - crop.optDouble("y") * 2)));
@@ -438,7 +440,7 @@ public class LocalVideoPickerPlugin extends Plugin {
         Transformer.Listener listener = new Transformer.Listener() {
             @Override public void onCompleted(androidx.media3.transformer.Composition composition, ExportResult exportResult) {
                 compositionTransformer = null; if (cancelled.get()) { temporary.delete(); call.reject("Export cancelled.", "CANCELLED"); return; }
-                progress("saving", 0); exportExecutor.execute(() -> publishComposition(call, temporary, endMs - startMs, width, height));
+                progress("saving", 0); exportExecutor.execute(() -> publishComposition(call, temporary, effectiveEndMs - effectiveStartMs, width, height));
             }
             @Override public void onError(androidx.media3.transformer.Composition composition, ExportResult exportResult, ExportException error) {
                 compositionTransformer = null; temporary.delete();
@@ -451,6 +453,31 @@ public class LocalVideoPickerPlugin extends Plugin {
         try { compositionTransformer.start(edited, temporary.getAbsolutePath()); }
         catch (SecurityException error) { temporary.delete(); call.reject("The selected source is no longer accessible.", "SOURCE_INACCESSIBLE", error); }
         catch (RuntimeException error) { temporary.delete(); call.reject("The device could not start the local encoder.", "ENCODER_UNAVAILABLE", error); }
+    }
+
+    private Long numberAsLong(PluginCall call, String key) {
+        Object value = call.getData().opt(key); return value instanceof Number ? ((Number) value).longValue() : null;
+    }
+
+    private TrimRange normalizeTrim(PluginCall call, String source, Long startMs, Long endMs) {
+        if (source == null || source.isEmpty()) { rejectTrim(call, "source_unreadable", 0, startMs, endMs); return null; }
+        long durationMs;
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try { retriever.setDataSource(getContext(), Uri.parse(source)); durationMs = parseLong(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)); }
+        catch (SecurityException error) { rejectTrim(call, "uri_access_lost", 0, startMs, endMs); return null; }
+        catch (Exception error) { rejectTrim(call, "source_unreadable", 0, startMs, endMs); return null; }
+        finally { releaseMediaMetadataRetrieverSafely(retriever); }
+        if (durationMs <= 0) { rejectTrim(call, "source_duration_unavailable", durationMs, startMs, endMs); return null; }
+        String code = TrimRange.validationCode(startMs, endMs, durationMs);
+        if (code != null) { rejectTrim(call, code, durationMs, startMs, endMs); return null; }
+        long effectiveEnd = Math.min(endMs, durationMs);
+        Log.i(TAG, "durationMs=" + durationMs + " startMs=" + startMs + " endMs=" + endMs + " nativeDurationMs=" + durationMs + " validation=ok");
+        return new TrimRange(startMs, effectiveEnd);
+    }
+
+    private void rejectTrim(PluginCall call, String code, long durationMs, Long startMs, Long endMs) {
+        Log.w(TAG, "durationMs=" + durationMs + " startMs=" + startMs + " endMs=" + endMs + " nativeDurationMs=" + durationMs + " validation=" + code);
+        call.reject("Invalid local export range.", code.toUpperCase(Locale.US));
     }
 
     private boolean validRect(JSONObject rect) {
