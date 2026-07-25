@@ -1,6 +1,8 @@
 import { registerPlugin } from "@capacitor/core";
 
 export interface LocalVideoPlugin {
+  readClipboard(): Promise<{ value: string }>;
+  backendRequest(options: { url: string; method: string; token?: string; body?: string; timeoutMs?: number }): Promise<{ status: number; body: string }>;
   chooseVideo(): Promise<{
     filename: string;
     fileSize: number;

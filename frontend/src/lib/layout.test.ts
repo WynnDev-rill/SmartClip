@@ -5,6 +5,7 @@ import {
   defaultLayout,
   facecamOutput,
   normalizeRect,
+  normalizeLayout,
   selectQuality,
   validateLayout,
   validateRect,
@@ -58,5 +59,11 @@ describe("vertical composition math", () => {
         facecamCrop: { x: 0.9, y: 0, width: 0.2, height: 0.2 },
       }),
     ).toMatch(/inside/);
+  });
+  it("normalizes every non-finite default export field", () => {
+    const normalized = normalizeLayout({ ...defaultLayout(), focalX: Number.NaN, focalY: Infinity, zoom: -2, gameplayCrop: { x: -1, y: 2, width: 0, height: Infinity } });
+    expect(validateLayout(normalized)).toBeNull();
+    expect(Object.values(normalized.gameplayCrop).every(Number.isFinite)).toBe(true);
+    expect(normalized).toMatchObject({ focalX: .5, focalY: .5, zoom: 1 });
   });
 });

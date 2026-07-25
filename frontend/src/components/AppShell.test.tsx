@@ -13,6 +13,15 @@ describe("mobile application shell", () => {
     expect(navigate).toHaveBeenCalledWith("downloads");
   });
 
+  it("opens a functional overflow menu", async () => {
+    const navigate = vi.fn();
+    render(<AppShell destination="home" onNavigate={navigate} title="Home"><p>Dashboard</p></AppShell>);
+    await userEvent.click(screen.getByRole("button", { name: "More options" }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
+    expect(navigate).toHaveBeenCalledWith("settings");
+  });
+
   it("supports keyboard-friendly segmented settings", async () => {
     const change = vi.fn();
     render(<SegmentedControl label="Duration" value="auto" options={[["auto", "Auto"], ["30", "30 sec"]] as const} onChange={change}/>);
@@ -35,5 +44,12 @@ describe("library screens", () => {
     render(<SettingsScreen/>);
     expect(screen.queryByText("super-secret-token")).not.toBeInTheDocument();
     expect(screen.getByText("Privacy")).toBeInTheDocument();
+  });
+
+  it("opens the tappable private server details without secrets", async () => {
+    render(<SettingsScreen/>);
+    await userEvent.click(screen.getByRole("button", { name: /Private server/i }));
+    expect(screen.getByRole("dialog", { name: "Server details" })).toHaveTextContent("https://smartclip-url-service.onrender.com");
+    expect(screen.getByRole("button", { name: "Check connection" })).toBeEnabled();
   });
 });

@@ -31,14 +31,21 @@ export class SmartClipBackendClient {
     if (!this.token || this.token === "replace-with-your-private-token") throw new BackendError("URL processing is not configured. Add SMARTCLIP_API_TOKEN at build time.");
     const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`${this.baseUrl}${path}`, { ...init, signal: init.signal || controller.signal, headers: { Authorization: `Bearer ${this.token}`, ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers } });
-      let body: unknown; try { body = await response.json(); } catch { if (response.ok) throw new BackendError("The server returned a malformed response.", response.status); }
-      if (!response.ok) { const detail = (body as BackendErrorResponse | undefined)?.detail; throw new BackendError(friendly(response.status, detail?.code, detail?.message), response.status, detail?.code); }
+      let status: number; let body: unknown;
+      if (Capacitor.isNativePlatform()) {
+        const response = await LocalVideoPlugin.backendRequest({ url: `${this.baseUrl}${path}`, method: init.method || "GET", token: this.token, body: typeof init.body === "string" ? init.body : undefined, timeoutMs });
+        status = response.status; try { body = JSON.parse(response.body); } catch { if (status < 400) throw new BackendError("The server returned a malformed response.", status, "malformed_response"); }
+      } else {
+        const response = await fetch(`${this.baseUrl}${path}`, { ...init, signal: init.signal || controller.signal, headers: { Authorization: `Bearer ${this.token}`, ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers } });
+        status = response.status; try { body = await response.json(); } catch { if (response.ok) throw new BackendError("The server returned a malformed response.", response.status, "malformed_response"); }
+      }
+      if (status >= 400) { const detail = (body as BackendErrorResponse | undefined)?.detail; throw new BackendError(friendly(status, detail?.code, detail?.message), status, status === 401 ? "unauthorized" : detail?.code); }
       return body as T;
     } catch (error) {
       if (error instanceof BackendError) throw error;
-      if (error instanceof DOMException && error.name === "AbortError") throw new BackendError("Waking the private processing server. This may take up to a minute. Retry if it does not respond.");
-      throw new BackendError("No internet connection, or the SmartClip server is waking. Please retry.");
+      if ((error instanceof DOMException && error.name === "AbortError") || (error instanceof Error && /TIMEOUT|timed out/i.test(`${"code" in error ? error.code : ""} ${error.message}`))) throw new BackendError("The server is waking.", undefined, "timeout");
+      if (error instanceof Error && /OFFLINE|internet|NetworkError/i.test(`${"code" in error ? error.code : ""} ${error.message}`)) throw new BackendError("No internet connection.", undefined, "offline");
+      throw new BackendError("The Android network bridge or CORS configuration is invalid.", undefined, Capacitor.isNativePlatform() ? "native_configuration" : "cors_configuration");
     } finally { clearTimeout(timer); }
   }
   inspect(url: string, signal?: AbortSignal) { return this.request<InspectResponse>("/api/url/inspect", { method: "POST", body: JSON.stringify({ url }), signal }); }
@@ -50,4 +57,19 @@ export class SmartClipBackendClient {
   getTokenForNativeDownload() { return this.token; }
 }
 export const backendClient = new SmartClipBackendClient();
+export type HealthState = "checking" | "online" | "waking" | "unavailable" | "timeout";
+export type HealthCheck = { state: HealthState; checkedAt: string; detail?: string };
+export async function checkPublicHealth(baseUrl = backendConfig.baseUrl, timeoutMs = 15_000): Promise<HealthCheck> {
+  const checkedAt = new Date().toISOString();
+  try {
+    let status: number;
+    if (Capacitor.isNativePlatform()) status = (await LocalVideoPlugin.backendRequest({ url: `${baseUrl}/health`, method: "GET", timeoutMs })).status;
+    else { const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs); try { status = (await fetch(`${baseUrl}/health`, { signal: controller.signal })).status; } finally { clearTimeout(timer); } }
+    return { state: status >= 200 && status < 300 ? "online" : status >= 500 ? "waking" : "unavailable", checkedAt, detail: `HTTP ${status}` };
+  } catch (error) {
+    return { state: error instanceof Error && /abort|timeout/i.test(error.message) ? "timeout" : "unavailable", checkedAt };
+  }
+}
 export const isPublicHttpUrl = (value: string) => { try { const url = new URL(value); return ["http:", "https:"].includes(url.protocol) && Boolean(url.hostname); } catch { return false; } };
+import { Capacitor } from "@capacitor/core";
+import { LocalVideoPlugin } from "./local-video-plugin";
