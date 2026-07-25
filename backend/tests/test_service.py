@@ -7,8 +7,10 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 
+from app import inspection
 from app.api.routes import url_jobs
 from app.core.config import settings
+from app.inspection import InspectionFailure, inspect_metadata
 from app.jobs import Job, manager
 from app.main import app
 from app.media import (
@@ -89,7 +91,9 @@ def test_inspect_safe_metadata(monkeypatch):
         "formats": [{"height": 720, "acodec": "none"}, {"vcodec": "none"}],
     }
     monkeypatch.setattr(
-        url_jobs.subprocess, "run", lambda *a, **k: Mock(stdout=json.dumps(payload))
+        inspection.subprocess,
+        "run",
+        lambda *a, **k: Mock(stdout=json.dumps(payload), stderr="", returncode=0),
     )
     with TestClient(app) as client:
         response = client.post(
@@ -114,10 +118,18 @@ def test_youtube_urls_are_normalized_without_tracking(url):
 @pytest.mark.parametrize(
     ("stderr", "code"),
     [
+        (
+            "ERROR: Sign in to confirm you're not a bot. This helps protect our community",
+            "youtube_bot_challenge",
+        ),
+        ("ERROR: player-client challenge", "youtube_client_blocked"),
+        ("ERROR: PO Token required", "po_token_required"),
         ("ERROR: Private video", "private_video"),
         ("ERROR: Video unavailable", "video_unavailable"),
         ("ERROR: Unsupported URL", "unsupported_url"),
-        ("ERROR: Sign in to confirm your age", "login_required"),
+        ("ERROR: Sign in to confirm your age", "age_restricted"),
+        ("ERROR: login required", "login_required"),
+        ("ERROR: not available in your country", "geo_restricted"),
         ("ERROR: signature extraction failed", "extractor_outdated"),
         ("ERROR: Unable to download webpage", "network_failure"),
         ("ERROR: extractor crashed", "extractor_failure"),
@@ -127,9 +139,9 @@ def test_inspection_failure_codes(monkeypatch, stderr, code):
     monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
 
     def fail(*args, **kwargs):
-        raise url_jobs.subprocess.CalledProcessError(1, args[0], stderr=stderr)
+        return Mock(returncode=1, stdout="", stderr=stderr)
 
-    monkeypatch.setattr(url_jobs.subprocess, "run", fail)
+    monkeypatch.setattr(inspection.subprocess, "run", fail)
     with TestClient(app) as client:
         response = client.post(
             "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
@@ -140,9 +152,9 @@ def test_inspection_failure_codes(monkeypatch, stderr, code):
 def test_inspection_timeout_has_distinct_code(monkeypatch):
     monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
     monkeypatch.setattr(
-        url_jobs.subprocess,
+        inspection.subprocess,
         "run",
-        lambda *a, **k: (_ for _ in ()).throw(url_jobs.subprocess.TimeoutExpired(a[0], 60)),
+        lambda *a, **k: (_ for _ in ()).throw(inspection.subprocess.TimeoutExpired(a[0], 60)),
     )
     with TestClient(app) as client:
         response = client.post(
@@ -154,7 +166,11 @@ def test_inspection_timeout_has_distinct_code(monkeypatch):
 
 def test_malformed_inspection_json_has_distinct_code(monkeypatch):
     monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
-    monkeypatch.setattr(url_jobs.subprocess, "run", lambda *a, **k: Mock(stdout="not-json"))
+    monkeypatch.setattr(
+        inspection.subprocess,
+        "run",
+        lambda *a, **k: Mock(stdout="not-json", stderr="", returncode=0),
+    )
     with TestClient(app) as client:
         response = client.post(
             "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
@@ -252,7 +268,7 @@ def test_error_is_sanitized(monkeypatch, private_detail):
     def fail(*a, **k):
         raise RuntimeError(private_detail)
 
-    monkeypatch.setattr(url_jobs.subprocess, "run", fail)
+    monkeypatch.setattr(inspection.subprocess, "run", fail)
     with TestClient(app) as client:
         response = client.post(
             "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
@@ -263,3 +279,67 @@ def test_error_is_sanitized(monkeypatch, private_detail):
         "message": "The extractor could not inspect this video.",
     }
     assert private_detail not in response.text
+
+
+def test_all_safe_clients_fail_without_leaking_stderr(monkeypatch, caplog):
+    secret = "Cookie: private-cookie https://signed.example/media?token=secret"
+    monkeypatch.setattr(
+        inspection.subprocess,
+        "run",
+        lambda *a, **k: Mock(returncode=1, stdout="", stderr=f"extractor crashed {secret}"),
+    )
+    with pytest.raises(InspectionFailure) as failure:
+        inspect_metadata("https://www.youtube.com/watch?v=abc", "safe-request", youtube=True)
+    assert failure.value.code == "extractor_failure"
+    assert secret not in caplog.text
+
+
+def test_safe_client_fallback_stops_after_success(monkeypatch):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            return Mock(returncode=1, stdout="", stderr="player client blocked")
+        return Mock(
+            returncode=0,
+            stderr="",
+            stdout=json.dumps({"title": "Public", "formats": [], "extractor_key": "Youtube"}),
+        )
+
+    monkeypatch.setattr(inspection.subprocess, "run", run)
+    result = inspect_metadata("https://www.youtube.com/watch?v=abc", "safe-request", youtube=True)
+    assert result.client == "web" and len(calls) == 2
+    assert "youtube:player_client=web" in calls[1]
+
+
+def test_diagnostic_endpoint_is_sanitized(monkeypatch):
+    monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
+    monkeypatch.setattr(
+        url_jobs,
+        "inspect_metadata",
+        lambda *a, **k: (_ for _ in ()).throw(
+            InspectionFailure("youtube_bot_challenge", 1, "default")
+        ),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/url/diagnose",
+            headers=auth(),
+            json={"url": "https://youtu.be/HhubZkgtkHM?si=tracking"},
+        )
+    assert response.json()["normalizedUrl"] == "https://www.youtube.com/watch?v=HhubZkgtkHM"
+    assert response.json()["publicReachability"] == "blocked_by_antibot"
+    assert "stderr" not in response.text.lower() and "tracking" not in response.text
+
+
+def test_progress_normalization_is_monotonic_and_tracks_terminal_states(tmp_path):
+    job = Job("progress", {}, tmp_path)
+    job.update_progress("inspecting", 10, "Inspecting")
+    assert (job.phase, job.progress_percent, job.current_step) == ("inspecting", 10, "Inspecting")
+    job.update_progress("completed", 100, "Completed", 1, 1)
+    job.update_progress("failed", -50, "Failed", 9, -1)
+    assert job.progress_percent == 100
+    assert job.completed_items == 0 and job.total_items == 0
+    job.update_progress("cancelled", 101, "Cancelled")
+    assert job.phase == "cancelled" and job.progress_percent == 100

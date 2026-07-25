@@ -3,8 +3,10 @@ export type InspectRequest = { url: string };
 export type InspectResponse = { title: string; uploader?: string | null; duration?: number | null; thumbnailUrl?: string | null; sourceWidth?: number | null; sourceHeight?: number | null; estimatedFilesize?: number | null; qualityOptions: string[]; extractor?: string | null; warnings: string[]; separateAudioVideo: boolean };
 export type CreateJobRequest = InspectRequest & { durationMode: "30-plus" | "60-plus" | "auto"; detectionMode: "conservative" | "balanced" | "aggressive"; outputQuality: "auto" | "720p" | "1080p"; layoutMode: "smart-crop" | "fit-background"; maximumCandidates: number };
 export type CreateJobResponse = { jobId: string; state: string; createdAt: string; statusUrl: string };
-export type JobState = "queued" | "inspecting" | "downloading" | "analyzing" | "generating candidates" | "rendering" | "completed" | "failed" | "cancelled" | "expired";
-export type JobStatus = { jobId: string; state: JobState; phase: string; progress?: number | null; message?: string; createdAt: string; expiresAt?: string | null; candidateCount: number; errorCode?: string | null; errorMessage?: string | null };
+export type JobPhase = "queued" | "inspecting" | "downloading" | "probing" | "analyzing" | "selecting_candidates" | "rendering" | "saving" | "completed" | "failed" | "cancelled";
+export type JobState = JobPhase | "expired";
+export type JobStatus = { jobId: string; state: JobState; phase: JobPhase | "expired"; progress?: number | null; progressPercent: number; currentStep: string; completedItems: number; totalItems: number; message?: string; createdAt: string; startedAt?: string | null; updatedAt: string; elapsedSeconds: number; expiresAt?: string | null; candidateCount: number; errorCode?: string | null; errorMessage?: string | null };
+export type DiagnoseResponse = { normalizedUrl: string; provider: "youtube" | "other"; publicReachability: "reachable" | "blocked_by_antibot" | "unreachable"; extractorVersion: string; errorCode?: string | null; elapsedMs?: number | null };
 export type CandidateResult = { id: string; startMs: number; endMs: number; durationMs: number; score: number; confidence: string; reasons: string[]; filename: string; resolution: string; size: number; expiresAt: string; downloadUrl: string };
 export type ResultsResponse = { jobId: string; candidates: CandidateResult[] };
 export type BackendErrorResponse = { detail?: { code?: string; message?: string } };
@@ -21,7 +23,7 @@ const friendly = (status: number, code?: string, fallback?: string) => {
   if (status === 401) return "SmartClip server authentication is not configured correctly.";
   if (status === 409) return "Another URL video is currently being processed. Try again after it finishes.";
   if (status === 410 || code === "expired") return "These temporary clips have expired. Generate them again.";
-  const messages: Record<string, string> = { unsafe_url: "Enter a valid public video URL.", duration_too_long: "This source is too long to process.", source_too_large: "This source is too large to process.", login_required: "This video requires a login and cannot be processed.", drm: "DRM-protected videos are not supported.", job_not_found: "The processing service restarted and this job is no longer available.", inspection_failed: "This public video is unavailable or unsupported." };
+  const messages: Record<string, string> = { unsafe_url: "Enter a valid public video URL.", duration_too_long: "This source is too long to process.", source_too_large: "This source is too large to process.", youtube_bot_challenge: "YouTube rejected the server request because of an anti-bot check.", youtube_client_blocked: "YouTube rejected the extractor player client.", po_token_required: "YouTube requires a proof-of-origin token that this server does not use.", private_video: "This video is private.", login_required: "This video explicitly requires login.", age_restricted: "This video is age restricted.", geo_restricted: "This video is unavailable in the server region.", video_unavailable: "This video is unavailable.", unsupported_url: "This video provider is not supported.", extractor_outdated: "The video extractor must be updated.", extractor_failure: "The video extractor could not inspect this video.", inspection_timeout: "Video inspection timed out.", network_failure: "The server could not reach the video host.", drm: "DRM-protected videos are not supported.", job_not_found: "The processing service restarted and this job is no longer available." };
   return (code && messages[code]) || fallback || "The SmartClip server could not complete this request.";
 };
 
@@ -49,6 +51,7 @@ export class SmartClipBackendClient {
     } finally { clearTimeout(timer); }
   }
   inspect(url: string, signal?: AbortSignal) { return this.request<InspectResponse>("/api/url/inspect", { method: "POST", body: JSON.stringify({ url }), signal }); }
+  diagnose(url: string, signal?: AbortSignal) { return this.request<DiagnoseResponse>("/api/url/diagnose", { method: "POST", body: JSON.stringify({ url }), signal }); }
   createJob(body: CreateJobRequest) { return this.request<CreateJobResponse>("/api/jobs", { method: "POST", body: JSON.stringify(body) }); }
   status(id: string, signal?: AbortSignal) { return this.request<JobStatus>(`/api/jobs/${encodeURIComponent(id)}`, { signal }, 30_000); }
   cancel(id: string) { return this.request<JobStatus>(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }); }

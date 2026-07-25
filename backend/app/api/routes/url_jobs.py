@@ -1,7 +1,6 @@
-import json
 import logging
-import subprocess
 from pathlib import Path
+from secrets import token_hex
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -9,8 +8,14 @@ from fastapi.responses import FileResponse
 from pydantic import AnyHttpUrl, BaseModel, Field
 
 from app.core.config import settings
+from app.inspection import (
+    InspectionFailure,
+    extractor_version,
+    inspect_metadata,
+    inspection_message,
+)
 from app.jobs import Job, manager
-from app.media import normalize_video_url, ytdlp_inspect_command
+from app.media import normalize_video_url
 from app.security import Auth, RateLimit, validate_url
 
 router = APIRouter(prefix="/api", dependencies=[Auth, RateLimit])
@@ -39,35 +44,14 @@ def checked(url: AnyHttpUrl) -> str:
 @router.post("/url/inspect", summary="Inspect a public video URL without downloading it")
 def inspect_url(body: URLRequest) -> dict:
     url = checked(body.url)
+    request_id = token_hex(8)
     try:
-        result = subprocess.run(
-            ytdlp_inspect_command(url), capture_output=True, text=True, timeout=60, check=True
-        )
-        data = json.loads(result.stdout)
-    except subprocess.TimeoutExpired as exc:
+        outcome = inspect_metadata(url, request_id, youtube="youtube.com" in url)
+        data = outcome.metadata
+    except InspectionFailure as exc:
+        status = 504 if exc.code == "inspection_timeout" else 502
         raise HTTPException(
-            504, detail={"code": "inspection_timeout", "message": "Video inspection timed out."}
-        ) from exc
-    except subprocess.CalledProcessError as exc:
-        code = classify_extractor_failure(exc.stderr or "")
-        raise HTTPException(
-            422, detail={"code": code, "message": inspection_message(code)}
-        ) from exc
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            502,
-            detail={
-                "code": "malformed_metadata",
-                "message": inspection_message("malformed_metadata"),
-            },
-        ) from exc
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise HTTPException(
-            502,
-            detail={
-                "code": "extractor_failure",
-                "message": inspection_message("extractor_failure"),
-            },
+            status, detail={"code": exc.code, "message": inspection_message(exc.code)}
         ) from exc
     except Exception as exc:
         # Never interpolate the exception: it may contain signed URLs, headers, or cookies.
@@ -82,18 +66,6 @@ def inspect_url(body: URLRequest) -> dict:
                 "message": inspection_message("extractor_failure"),
             },
         ) from exc
-    if (
-        not isinstance(data, dict)
-        or not data.get("title")
-        or not isinstance(data.get("formats"), list)
-    ):
-        raise HTTPException(
-            502,
-            detail={
-                "code": "malformed_metadata",
-                "message": inspection_message("malformed_metadata"),
-            },
-        )
     duration = data.get("duration")
     if duration and duration > settings.max_video_duration_minutes * 60:
         raise HTTPException(
@@ -121,53 +93,34 @@ def inspect_url(body: URLRequest) -> dict:
     }
 
 
-def classify_extractor_failure(stderr: str) -> str:
-    text = stderr.lower()
-    if "private video" in text:
-        return "private_video"
-    if any(
-        value in text
-        for value in ("sign in", "login required", "cookies-from-browser", "confirm your age")
-    ):
-        return "login_required"
-    if any(value in text for value in ("video unavailable", "has been removed", "not available")):
-        return "video_unavailable"
-    if any(value in text for value in ("unsupported url", "no suitable extractor")):
-        return "unsupported_url"
-    if any(
-        value in text
-        for value in (
-            "update to a newer version",
-            "yt-dlp is out of date",
-            "signature extraction failed",
+@router.post("/url/diagnose", summary="Return sanitized public URL extraction diagnostics")
+def diagnose_url(body: URLRequest) -> dict:
+    url = checked(body.url)
+    provider = "youtube" if "youtube.com" in url else "other"
+    request_id = token_hex(8)
+    try:
+        result = inspect_metadata(url, request_id, youtube=provider == "youtube")
+        return {
+            "normalizedUrl": url,
+            "provider": provider,
+            "publicReachability": "reachable",
+            "extractorVersion": result.extractor_version,
+            "errorCode": None,
+            "elapsedMs": result.elapsed_ms,
+        }
+    except InspectionFailure as exc:
+        reachability = (
+            "blocked_by_antibot" if exc.code == "youtube_bot_challenge" else "unreachable"
         )
-    ):
-        return "extractor_outdated"
-    if any(
-        value in text
-        for value in (
-            "unable to download",
-            "network is unreachable",
-            "timed out",
-            "temporary failure",
-            "connection reset",
-        )
-    ):
-        return "network_failure"
-    return "extractor_failure"
-
-
-def inspection_message(code: str) -> str:
-    return {
-        "unsupported_url": "No extractor supports this URL.",
-        "video_unavailable": "The video is unavailable.",
-        "private_video": "The video is private.",
-        "login_required": "The video requires login or cookies.",
-        "extractor_outdated": "The installed extractor must be updated.",
-        "network_failure": "The extractor could not reach the video host.",
-        "malformed_metadata": "The extractor returned malformed metadata.",
-        "extractor_failure": "The extractor could not inspect this video.",
-    }.get(code, "The extractor could not inspect this video.")
+        # The response intentionally excludes stderr, command arguments, paths, and request headers.
+        return {
+            "normalizedUrl": url,
+            "provider": provider,
+            "publicReachability": reachability,
+            "extractorVersion": extractor_version(),
+            "errorCode": exc.code,
+            "elapsedMs": exc.elapsed_ms,
+        }
 
 
 def view(job: Job) -> dict:
@@ -176,9 +129,15 @@ def view(job: Job) -> dict:
         "state": job.state,
         "phase": job.phase,
         "progress": job.progress,
+        "progressPercent": job.progress_percent,
+        "currentStep": job.current_step,
+        "completedItems": job.completed_items,
+        "totalItems": job.total_items,
         "message": job.message,
         "createdAt": job.created_at,
         "startedAt": job.started_at,
+        "updatedAt": job.updated_at,
+        "elapsedSeconds": job.elapsed_seconds,
         "completedAt": job.completed_at,
         "expiresAt": job.expires_at,
         "candidateCount": len(job.candidates),

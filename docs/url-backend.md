@@ -10,7 +10,15 @@ Sources default to at most 60 minutes and 1000 MB; outputs to 120 seconds and fi
 
 ## API
 
-`GET /health` is public. All others require `Authorization: Bearer $SMARTCLIP_API_TOKEN`: `POST /api/url/inspect`, `POST /api/jobs`, `GET /api/jobs/{job_id}`, `POST /api/jobs/{job_id}/cancel`, `GET /api/jobs/{job_id}/results`, and `GET /api/files/{job_id}/{filename}`. OpenAPI is at `/docs`.
+`GET /health` is public. All others require `Authorization: Bearer $SMARTCLIP_API_TOKEN`: `POST /api/url/inspect`, `POST /api/url/diagnose`, `POST /api/jobs`, `GET /api/jobs/{job_id}`, `POST /api/jobs/{job_id}/cancel`, `GET /api/jobs/{job_id}/results`, and `GET /api/files/{job_id}/{filename}`. OpenAPI is at `/docs`.
+
+Inspection canonicalizes YouTube watch, short, and `youtu.be` links and removes tracking parameters. It runs metadata-only (`--skip-download --dump-single-json`), disables playlists and user configuration, uses a 15-second socket timeout, and enforces a strict 60-second total process budget. YouTube first uses yt-dlp's default supported clients, then makes one fallback with the supported `web` player client only for generic client/PO-token/extractor failures. It stops at the first valid metadata document. No cookies, authenticated session, media download, or access-control bypass is used.
+
+Extractor errors distinguish anti-bot challenges, blocked player clients, PO-token requirements, private, explicit login, age, geography, unavailable media, an outdated extractor, network failure, timeout, unsupported URL, and generic extractor failure. In particular, “sign in to confirm you're not a bot” is an anti-bot result—not evidence that a public video is private or login-only.
+
+`POST /api/url/diagnose` accepts the same `{ "url": "..." }` body and returns only the normalized URL, provider, reachability category, pinned extractor version, safe error code, and elapsed milliseconds. Internal structured logs contain only a random request ID, category, version, exit code, extractor/client, and elapsed time. Neither surface includes stderr, cookies, authorization, API tokens, filesystem paths, signed stream URLs, or temporary download URLs.
+
+Job status now exposes actual stage progress: `phase`, `progressPercent`, `currentStep`, `completedItems`, `totalItems`, `startedAt`, `updatedAt`, and `elapsedSeconds`. Supported phases are queued, inspecting, downloading, probing, analyzing, selecting_candidates, rendering, saving, completed, failed, and cancelled. Percentages advance only when those backend stages begin or rendering items finish; they are monotonic and normalized to 0–100. Existing `state`, `progress`, message, cancellation, expiry, and result fields remain for compatibility.
 
 ## Security and lifetime
 
@@ -33,7 +41,7 @@ curl http://localhost:8000/health
 curl -H "Authorization: Bearer $SMARTCLIP_API_TOKEN" -H 'Content-Type: application/json' -d '{"url":"https://www.youtube.com/watch?v=VIDEO"}' http://localhost:8000/api/url/inspect
 ```
 
-Render Blueprint settings are in `render.yaml`: Docker Web Service, `main`, Free, automatic deploy, `/health`, and no other service. Free instances sleep, restart without persistence, have constrained CPU/RAM/disk, and can render much slower than video duration; long downloads/1080p may fail. This service makes no claim of unrestricted YouTube compatibility and supports public, non-DRM, non-login videos accepted by current yt-dlp. Cookies and sessions are deliberately unsupported. Next step is APK URL submission/status/result download integration; it is not part of this change.
+Render Blueprint settings are in `render.yaml`: Docker Web Service, `main`, Free, automatic deploy, `/health`, and no other service. Free instances sleep, restart without persistence, have constrained CPU/RAM/disk, and can render much slower than video duration; long downloads/1080p may fail. Public YouTube support depends on YouTube accepting requests from the Render outbound IP. A video that works incognito can therefore still return `youtube_bot_challenge`; player-client fallback cannot guarantee access when the IP itself is challenged. Cookies and sessions are deliberately unsupported. Redeploy the backend image to activate these changes; no new Render variable or manual configuration is required.
 
 ## Android client integration
 
