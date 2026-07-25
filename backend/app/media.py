@@ -24,16 +24,25 @@ def normalize_video_url(value: str) -> str:
     return urlunparse(("https", "www.youtube.com", "/watch", "", query, ""))
 
 
-def ytdlp_inspect_command(url: str) -> list[str]:
-    return [
+def ytdlp_inspect_command(url: str, youtube_client: str | None = None) -> list[str]:
+    command = [
         "yt-dlp",
         "--ignore-config",
         "--no-playlist",
         "--skip-download",
         "--dump-single-json",
-        "--",
-        url,
+        "--socket-timeout",
+        "15",
     ]
+    if youtube_client:
+        command.extend(["--extractor-args", f"youtube:player_client={youtube_client}"])
+    command.extend(
+        [
+            "--",
+            url,
+        ]
+    )
+    return command
 
 
 def ytdlp_download_command(url: str, directory: Path, height: int) -> list[str]:

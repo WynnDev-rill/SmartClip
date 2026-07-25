@@ -12,6 +12,7 @@ from secrets import token_urlsafe
 from typing import Any
 
 from app.core.config import settings
+from app.inspection import InspectionFailure, inspect_metadata, inspection_message
 from app.media import Signal, analyze, render_command, ytdlp_download_command
 
 TERMINAL = {"completed", "failed", "cancelled", "expired"}
@@ -25,9 +26,14 @@ class Job:
     state: str = "queued"
     phase: str = "queued"
     progress: int | None = None
+    progress_percent: int = 0
+    current_step: str = "Waiting to start."
+    completed_items: int = 0
+    total_items: int = 1
     message: str = "Waiting to start."
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     expires_at: datetime | None = None
     cancelled: threading.Event = field(default_factory=threading.Event)
@@ -35,6 +41,22 @@ class Job:
     candidates: list[dict[str, Any]] = field(default_factory=list)
     error_code: str | None = None
     error_message: str | None = None
+
+    @property
+    def elapsed_seconds(self) -> int:
+        end = self.completed_at or datetime.now(UTC)
+        return max(0, round((end - (self.started_at or self.created_at)).total_seconds()))
+
+    def update_progress(
+        self, phase: str, percent: int, step: str, completed: int = 0, total: int = 1
+    ) -> None:
+        normalized = max(self.progress_percent, min(100, max(0, percent)))
+        self.state = self.phase = phase
+        self.progress = self.progress_percent = normalized
+        self.message = self.current_step = step
+        self.total_items = max(0, total)
+        self.completed_items = min(max(0, completed), self.total_items)
+        self.updated_at = datetime.now(UTC)
 
 
 class JobManager:
@@ -80,12 +102,24 @@ class JobManager:
         # Popen is cleared; use output existence as success for mocked/test and real commands.
         return subprocess.CompletedProcess(args, returncode, stdout, stderr)
 
+    @staticmethod
+    def _check_cancelled(job: Job) -> None:
+        if job.cancelled.is_set():
+            raise InterruptedError
+
     def _run(self, job: Job) -> None:
         try:
             job.started_at = datetime.now(UTC)
-            job.state = job.phase = "downloading"
-            job.message = "Downloading source video."
+            self._check_cancelled(job)
+            job.update_progress("inspecting", 5, "Inspecting public source metadata.")
+            inspect_metadata(
+                job.request["url"], job.id[:16], youtube="youtube.com" in job.request["url"]
+            )
+            self._check_cancelled(job)
+            job.update_progress("downloading", 15, "Downloading source video.")
             height = 1080 if job.request["outputQuality"] == "1080p" else 720
+            # Keep this checkpoint adjacent to process creation. No download may start after cancel.
+            self._check_cancelled(job)
             self._execute(
                 job, ytdlp_download_command(job.request["url"], job.directory, height), 1800
             )
@@ -93,8 +127,10 @@ class JobManager:
             if not sources:
                 raise RuntimeError("download")
             source = sources[0]
-            job.state = job.phase = "analyzing"
-            job.message = "Analyzing audio and visual activity."
+            self._check_cancelled(job)
+            job.update_progress("probing", 35, "Probing downloaded media.")
+            self._check_cancelled(job)
+            job.update_progress("analyzing", 45, "Analyzing audio and visual activity.")
             # Lightweight deterministic windows; production extraction is isolated behind ffmpeg.
             duration = min(30.0, settings.max_output_duration_seconds)
             signals = [Signal(0, 0.1, 0.1), Signal(5, 0.85, 0.8, 0.5), Signal(duration, 0.05, 0.05)]
@@ -106,12 +142,13 @@ class JobManager:
             candidates = analyze(
                 signals, job.request["detectionMode"], limit, settings.max_output_duration_seconds
             )
-            job.state = job.phase = "rendering"
-            job.message = "Rendering vertical clips."
+            self._check_cancelled(job)
+            job.update_progress("selecting_candidates", 60, "Selecting highlight candidates.")
+            self._check_cancelled(job)
+            job.update_progress("rendering", 65, "Rendering vertical clips.", 0, len(candidates))
             width, out_height = (1080, 1920) if height == 1080 else (720, 1280)
             for index, candidate in enumerate(candidates, 1):
-                if job.cancelled.is_set():
-                    raise InterruptedError
+                self._check_cancelled(job)
                 output = job.directory / f"candidate-{index}.mp4"
                 self._execute(
                     job,
@@ -142,16 +179,37 @@ class JobManager:
                         "size": output.stat().st_size,
                     }
                 )
+                render_progress = 65 + round(index / max(1, len(candidates)) * 25)
+                job.update_progress(
+                    "rendering",
+                    render_progress,
+                    "Rendering vertical clips.",
+                    index,
+                    len(candidates),
+                )
+            self._check_cancelled(job)
+            job.update_progress(
+                "saving", 95, "Saving temporary results.", len(candidates), len(candidates)
+            )
             source.unlink(missing_ok=True)
-            job.state = job.phase = "completed"
-            job.progress = 100
-            job.message = "Completed." if job.candidates else "No strong highlight found."
+            self._check_cancelled(job)
+            job.update_progress(
+                "completed",
+                100,
+                "Completed." if job.candidates else "No strong highlight found.",
+                len(candidates),
+                len(candidates),
+            )
         except InterruptedError:
-            job.state = job.phase = "cancelled"
-            job.message = "Cancelled."
+            job.update_progress("cancelled", job.progress_percent, "Cancelled.")
+            shutil.rmtree(job.directory, ignore_errors=True)
+        except InspectionFailure as exc:
+            job.update_progress("failed", job.progress_percent, inspection_message(exc.code))
+            job.error_code = exc.code
+            job.error_message = inspection_message(exc.code)
             shutil.rmtree(job.directory, ignore_errors=True)
         except Exception:
-            job.state = job.phase = "failed"
+            job.update_progress("failed", job.progress_percent, "Video processing failed.")
             job.error_code = "processing_failed"
             job.error_message = (
                 "Video processing failed. Check that the public URL is available and supported."
@@ -160,6 +218,7 @@ class JobManager:
             shutil.rmtree(job.directory, ignore_errors=True)
         finally:
             job.completed_at = datetime.now(UTC)
+            job.updated_at = job.completed_at
             job.expires_at = job.completed_at + timedelta(minutes=settings.job_expiry_minutes)
 
     def cancel(self, job: Job) -> None:
