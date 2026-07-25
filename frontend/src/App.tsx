@@ -37,6 +37,7 @@ import {
   exportNativeClip,
   NativeEditor,
   presetRange,
+  trimPayload,
   validateTrim,
   type ExportResult,
   type ExportState,
@@ -201,8 +202,7 @@ export default function App() {
       const gameplayCrop = normalized.mode === "smart-crop" ? coverCrop(video.width, video.height, output.width, output.height, normalized.focalX, normalized.focalY, normalized.zoom) : normalized.gameplayCrop;
       const exported = await Promise.race([NativeEditor.exportComposition({
         uri: video.uri,
-        startMs: Math.round(range.start * 1000),
-        endMs: Math.round(range.end * 1000),
+        ...trimPayload(range),
         layout: { ...normalized, gameplayCrop },
         quality,
         outputWidth: output.width,
@@ -435,6 +435,7 @@ export default function App() {
                     </Button>
                   )}
                 </div>
+                <p className="mt-2 text-xs text-muted-foreground">{t("exportClipHelp")}</p>
                 {busy && (
                   <div className="mt-5" aria-live="polite">
                     <div className="flex justify-between text-sm capitalize">
@@ -481,8 +482,7 @@ export default function App() {
                   {t("exportVertical")}
                 </Button>
                 <span className="self-center text-xs text-muted-foreground">
-                  Composition re-encodes locally; trim-only export remains
-                  available above.
+                  {t("exportVerticalHelp")}
                 </span>
               </div>
               {result && (

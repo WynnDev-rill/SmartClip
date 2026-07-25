@@ -10,7 +10,14 @@ from app.api.routes import url_jobs
 from app.core.config import settings
 from app.jobs import Job, manager
 from app.main import app
-from app.media import Signal, analyze, render_command, ytdlp_download_command, ytdlp_inspect_command
+from app.media import (
+    Signal,
+    analyze,
+    normalize_video_url,
+    render_command,
+    ytdlp_download_command,
+    ytdlp_inspect_command,
+)
 from app.security import token_matches, validate_url
 
 TOKEN = "test-secret"
@@ -85,6 +92,59 @@ def test_inspect_safe_metadata(monkeypatch):
         )
     assert response.status_code == 200 and response.json()["qualityOptions"] == ["720p"]
     assert "formats" not in response.json()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/watch?v=3iPA35AKI0E",
+        "https://youtu.be/3iPA35AKI0E?si=BJrRfwEn1aa4SeQS",
+        "https://youtube.com/shorts/3iPA35AKI0E?si=tracking",
+    ],
+)
+def test_youtube_urls_are_normalized_without_tracking(url):
+    assert normalize_video_url(url) == "https://www.youtube.com/watch?v=3iPA35AKI0E"
+
+
+@pytest.mark.parametrize(
+    ("stderr", "code"),
+    [
+        ("ERROR: Private video", "private_video"),
+        ("ERROR: Video unavailable", "video_unavailable"),
+        ("ERROR: Unsupported URL", "unsupported_url"),
+        ("ERROR: Sign in to confirm your age", "login_required"),
+        ("ERROR: signature extraction failed", "extractor_outdated"),
+        ("ERROR: Unable to download webpage", "network_failure"),
+        ("ERROR: extractor crashed", "extractor_failure"),
+    ],
+)
+def test_inspection_failure_codes(monkeypatch, stderr, code):
+    monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
+
+    def fail(*args, **kwargs):
+        raise url_jobs.subprocess.CalledProcessError(1, args[0], stderr=stderr)
+
+    monkeypatch.setattr(url_jobs.subprocess, "run", fail)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
+        )
+    assert response.json()["detail"]["code"] == code
+
+
+def test_inspection_timeout_has_distinct_code(monkeypatch):
+    monkeypatch.setattr(url_jobs, "validate_url", lambda u: u)
+    monkeypatch.setattr(
+        url_jobs.subprocess,
+        "run",
+        lambda *a, **k: (_ for _ in ()).throw(url_jobs.subprocess.TimeoutExpired(a[0], 60)),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/url/inspect", headers=auth(), json={"url": "https://example.com/v"}
+        )
+    assert response.status_code == 504
+    assert response.json()["detail"]["code"] == "inspection_timeout"
 
 
 def test_option_validation():

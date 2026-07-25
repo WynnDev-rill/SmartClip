@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { presetRange, validateTrim } from "./trim";
+import { presetRange, trimPayload, validateTrim } from "./trim";
 
 describe("trim ranges", () => {
   it("accepts a valid range", () => expect(validateTrim({ start: 2, end: 12 }, 20)).toBeNull());
@@ -9,5 +9,8 @@ describe("trim ranges", () => {
     expect(presetRange(15, 60)).toEqual({ start: 0, end: 15 });
     expect(presetRange(30, 60)).toEqual({ start: 0, end: 30 });
     expect(presetRange("full", 60)).toEqual({ start: 0, end: 60 });
+  });
+  it("serializes seconds to milliseconds exactly once", () => {
+    expect(trimPayload({ start: 1.2344, end: 1366.04 })).toEqual({ startMs: 1234, endMs: 1366040 });
   });
 });

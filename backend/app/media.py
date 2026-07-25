@@ -1,5 +1,27 @@
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+
+
+def normalize_video_url(value: str) -> str:
+    """Canonicalize supported YouTube links without changing their video id."""
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").lower()
+    if host not in YOUTUBE_HOSTS:
+        return value
+    video_id = None
+    if host == "youtu.be":
+        video_id = parsed.path.strip("/").split("/", 1)[0]
+    elif parsed.path == "/watch":
+        video_id = dict(parse_qsl(parsed.query)).get("v")
+    elif parsed.path.startswith("/shorts/"):
+        video_id = parsed.path.split("/", 3)[2]
+    if not video_id:
+        return value
+    query = urlencode({"v": video_id})
+    return urlunparse(("https", "www.youtube.com", "/watch", "", query, ""))
 
 
 def ytdlp_inspect_command(url: str) -> list[str]:
@@ -7,7 +29,7 @@ def ytdlp_inspect_command(url: str) -> list[str]:
         "yt-dlp",
         "--ignore-config",
         "--no-playlist",
-        "--no-warnings",
+        "--skip-download",
         "--dump-single-json",
         "--",
         url,
