@@ -192,6 +192,9 @@ export function selectQuality(
   };
 }
 export function validateLayout(layout: Layout): string | null {
+  if (!Number.isFinite(layout.focalX)) return "Focal X must be a finite number.";
+  if (!Number.isFinite(layout.focalY)) return "Focal Y must be a finite number.";
+  if (!Number.isFinite(layout.zoom) || layout.zoom <= 0) return "Zoom must be a positive finite number.";
   return (
     validateRect(layout.gameplayCrop, "Gameplay") ||
     (layout.mode === "split" || layout.mode === "manual-overlay"
@@ -199,4 +202,8 @@ export function validateLayout(layout: Layout): string | null {
         validateRect(layout.facecamOutput, "Facecam output")
       : null)
   );
+}
+export function normalizeLayout(layout: Layout): Layout {
+  const usesFacecam = layout.mode === "split" || layout.mode === "manual-overlay";
+  return { ...layout, gameplayCrop: normalizeRect(layout.gameplayCrop), facecamCrop: usesFacecam ? normalizeRect(layout.facecamCrop) : defaultLayout().facecamCrop, facecamOutput: usesFacecam ? normalizeRect(layout.facecamOutput) : defaultLayout().facecamOutput, focalX: clamp(Number.isFinite(layout.focalX) ? layout.focalX : .5), focalY: clamp(Number.isFinite(layout.focalY) ? layout.focalY : .5), zoom: clamp(Number.isFinite(layout.zoom) ? layout.zoom : 1, 1, 4), cornerRadius: Math.max(0, Number.isFinite(layout.cornerRadius) ? layout.cornerRadius : 0), blur: Math.max(0, Number.isFinite(layout.blur) ? layout.blur : 0) };
 }

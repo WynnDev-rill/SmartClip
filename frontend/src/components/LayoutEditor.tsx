@@ -15,6 +15,7 @@ import {
   type Rect,
 } from "@/lib/layout";
 import type { LocalVideoMetadata } from "@/lib/video-picker";
+import { useI18n } from "@/i18n";
 
 type Props = {
   video: LocalVideoMetadata;
@@ -36,6 +37,7 @@ const presets: [Preset, string][] = [
 ];
 
 export function LayoutEditor({ video, disabled, onChange }: Props) {
+  const { t } = useI18n();
   const [layout, setLayoutState] = useState(defaultLayout);
   const [quality, setQuality] = useState<Quality>("auto");
   const [selected, setSelected] = useState<
@@ -256,17 +258,17 @@ export function LayoutEditor({ video, disabled, onChange }: Props) {
           {layout.mode === "smart-crop" && (
             <>
               <Range
-                label="Horizontal focal position"
+                label={t("horizontalFocalPosition")}
                 value={layout.focalX}
                 onChange={(value) => setLayout({ ...layout, focalX: value })}
               />
               <Range
-                label="Vertical focal position"
+                label={t("verticalFocalPosition")}
                 value={layout.focalY}
                 onChange={(value) => setLayout({ ...layout, focalY: value })}
               />
               <Range
-                label="Zoom"
+                label={t("zoom")}
                 value={layout.zoom}
                 min={1}
                 max={4}
@@ -319,7 +321,7 @@ export function LayoutEditor({ video, disabled, onChange }: Props) {
             </>
           )}
           <div>
-            <p className="mb-2 text-xs text-muted-foreground">Export quality</p>
+            <p className="mb-2 text-xs text-muted-foreground">{t("exportQuality")}</p>
             <div className="flex gap-2">
               {(["auto", "720p", "1080p"] as Quality[]).map((value) => (
                 <Button
@@ -327,7 +329,7 @@ export function LayoutEditor({ video, disabled, onChange }: Props) {
                   variant={quality === value ? "default" : "outline"}
                   onClick={() => chooseQuality(value)}
                 >
-                  {value === "auto" ? "Auto" : value}
+                  {value === "auto" ? t("auto") : value}
                 </Button>
               ))}
             </div>

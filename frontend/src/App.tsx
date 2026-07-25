@@ -19,6 +19,7 @@ import type { HighlightCandidate } from "@/lib/highlights";
 import {
   coverCrop,
   defaultLayout,
+  normalizeLayout,
   selectQuality,
   validateLayout,
   type Layout,
@@ -86,7 +87,7 @@ export default function App() {
         setRange({ start: 0, end: selected.duration });
         setResult(undefined);
         setState("idle");
-        const item: HistoryItem = { id: `${Date.now()}`, title: selected.filename, source: "Device", status: "cancelled", date: new Date().toISOString() };
+        const item: HistoryItem = { id: `${Date.now()}`, title: selected.filename, source: "Device", status: "draft", date: new Date().toISOString() };
         setHistory((old) => { const next = [item, ...old].slice(0, 30); localStorage.setItem("smartclip.history", JSON.stringify(next)); return next; });
       }
     } catch (reason) {
@@ -147,15 +148,10 @@ export default function App() {
     setResult(undefined);
     setState("preparing");
     setProgress(undefined);
-    const listener = await NativeEditor.addListener(
-      "exportProgress",
-      (event) => {
-        setState(event.state);
-        setProgress(event.progress);
-      },
-    );
+    let listener: Awaited<ReturnType<typeof NativeEditor.addListener>> | undefined;
     try {
-      const exported = await exportNativeClip(video.uri, range);
+      listener = await NativeEditor.addListener("exportProgress", (event) => { setState(event.state); setProgress(event.progress); });
+      const exported = await Promise.race([exportNativeClip(video.uri, range), new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Export stalled. Try again after closing other video apps.")), 10 * 60_000))]);
       setResult(exported);
       setState("completed");
       setProgress(100);
@@ -170,7 +166,7 @@ export default function App() {
         cancelled ? "Export cancelled. No gallery item was saved." : message,
       );
     } finally {
-      await listener.remove();
+      await listener?.remove();
     }
   };
   const exportVertical = async () => {
@@ -188,6 +184,7 @@ export default function App() {
       setState("failed");
       return;
     }
+    const normalized = normalizeLayout(layout);
     const output = selectQuality(
       quality,
       video.width,
@@ -198,26 +195,24 @@ export default function App() {
     setResult(undefined);
     setState("preparing");
     setProgress(undefined);
-    const listener = await NativeEditor.addListener(
-      "exportProgress",
-      (event) => {
-        setState(event.state);
-        setProgress(event.progress);
-      },
-    );
+    let listener: Awaited<ReturnType<typeof NativeEditor.addListener>> | undefined;
     try {
-      const exported = await NativeEditor.exportComposition({
+      listener = await NativeEditor.addListener("exportProgress", (event) => { setState(event.state); setProgress(event.progress); });
+      const gameplayCrop = normalized.mode === "smart-crop" ? coverCrop(video.width, video.height, output.width, output.height, normalized.focalX, normalized.focalY, normalized.zoom) : normalized.gameplayCrop;
+      const exported = await Promise.race([NativeEditor.exportComposition({
         uri: video.uri,
         startMs: Math.round(range.start * 1000),
         endMs: Math.round(range.end * 1000),
-        layout: { ...layout, gameplayCrop: layout.mode === "smart-crop" ? coverCrop(video.width, video.height, output.width, output.height, layout.focalX, layout.focalY, layout.zoom) : layout.gameplayCrop },
+        layout: { ...normalized, gameplayCrop },
         quality,
         outputWidth: output.width,
         outputHeight: output.height,
-      });
+      }), new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Export stalled. Try again after closing other video apps.")), 10 * 60_000))]);
       setResult(exported);
       setState("completed");
       setProgress(100);
+      const item: DownloadItem = { id: exported.uri, filename: exported.filename, date: new Date().toISOString(), size: formatBytes(exported.fileSize), resolution: `${exported.width} × ${exported.height}`, source: "Device", uri: exported.uri };
+      setDownloads((old) => { const next = [item, ...old.filter(x => x.id !== item.id)]; localStorage.setItem("smartclip.downloads", JSON.stringify(next)); return next; });
     } catch (reason) {
       const message =
         reason instanceof Error ? reason.message : "Local composition failed.";
@@ -227,7 +222,7 @@ export default function App() {
         cancelled ? "Export cancelled. No gallery item was saved." : message,
       );
     } finally {
-      await listener.remove();
+      await listener?.remove();
     }
   };
   const exportCandidates = async (candidates: HighlightCandidate[]) => {
@@ -282,8 +277,7 @@ export default function App() {
               >
                 {loading ? (
                   <>
-                    <LoaderCircle className="animate-spin" size={17} /> Reading
-                    metadata…
+                    <LoaderCircle className="animate-spin" size={17} /> {t("readingMetadata")}
                   </>
                 ) : (
                   t("chooseVideo")
@@ -316,18 +310,18 @@ export default function App() {
               </div>
               <dl className="grid grid-cols-2 gap-3 py-5 sm:grid-cols-4">
                 {[
-                  ["File size", formatBytes(video.fileSize)],
-                  ["Duration", formatDuration(video.duration)],
-                  ["Width", `${video.width} px`],
-                  ["Height", `${video.height} px`],
-                  ["Resolution", video.resolution],
-                  ["Orientation", video.orientation],
+                  [t("fileSize"), formatBytes(video.fileSize)],
+                  [t("duration"), formatDuration(video.duration)],
+                  [t("width"), `${video.width} px`],
+                  [t("height"), `${video.height} px`],
+                  [t("resolution"), video.resolution],
+                  [t("orientation"), video.orientation],
                   ["MIME type", video.mimeType],
-                  ["Local URI", video.uri],
+                  [t("localUri"), video.uri],
                 ].map(([label, value]) => (
                   <div
                     key={label}
-                    className={`${label === "Local URI" ? "col-span-2 sm:col-span-4" : ""} rounded-xl bg-black/20 p-3`}
+                    className={`${label === t("localUri") ? "col-span-2 sm:col-span-4" : ""} rounded-xl bg-black/20 p-3`}
                   >
                     <dt className="text-xs text-muted-foreground">{label}</dt>
                     <dd className="mt-1 break-all text-sm font-medium">
@@ -337,7 +331,7 @@ export default function App() {
                 ))}
               </dl>
               <section
-                aria-label="Trim editor"
+                aria-label={t("trimEditor")}
                 className="rounded-2xl border border-white/10 bg-black/20 p-4 sm:p-5"
               >
                 <div className="flex items-center justify-between">
@@ -349,15 +343,15 @@ export default function App() {
                       setRange(presetRange("full", video.duration))
                     }
                   >
-                    Reset
+                    {t("reset")}
                   </Button>
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {[
-                    ["Source", video.duration],
-                    ["Start", range.start],
-                    ["End", range.end],
-                    ["Selected", Math.max(0, range.end - range.start)],
+                    [t("source"), video.duration],
+                    [t("start"), range.start],
+                    [t("end"), range.end],
+                    [t("selected"), Math.max(0, range.end - range.start)],
                   ].map(([label, value]) => (
                     <div key={String(label)}>
                       <p className="text-xs text-muted-foreground">{label}</p>
@@ -368,9 +362,9 @@ export default function App() {
                   ))}
                 </div>
                 <label className="mt-5 block text-sm">
-                  Start time
+                  {t("startTime")}
                   <input
-                    aria-label="Start time"
+                    aria-label={t("startTime")}
                     className="mt-2 w-full accent-violet-500"
                     type="range"
                     min="0"
@@ -384,9 +378,9 @@ export default function App() {
                   />
                 </label>
                 <label className="mt-4 block text-sm">
-                  End time
+                  {t("endTime")}
                   <input
-                    aria-label="End time"
+                    aria-label={t("endTime")}
                     className="mt-2 w-full accent-violet-500"
                     type="range"
                     min="0"
@@ -402,10 +396,10 @@ export default function App() {
                 <div className="mt-4 flex flex-wrap gap-2">
                   {(
                     [
-                      [10, "First 10 seconds"],
-                      [15, "15 seconds"],
-                      [30, "30 seconds"],
-                      ["full", "Full duration"],
+                      [10, t("first10")],
+                      [15, t("seconds15")],
+                      [30, t("seconds30")],
+                      ["full", t("fullDuration")],
                     ] as const
                   ).map(([length, label]) => (
                     <Button
@@ -437,7 +431,7 @@ export default function App() {
                       onClick={() => NativeEditor.cancelExport()}
                     >
                       <X size={17} />
-                      Cancel
+                      {t("cancel")}
                     </Button>
                   )}
                 </div>
@@ -447,7 +441,7 @@ export default function App() {
                       <span>{state}…</span>
                       <span>
                         {progress === undefined
-                          ? "Working locally"
+                          ? t("workingLocally")
                           : `${progress}%`}
                       </span>
                     </div>
@@ -463,7 +457,7 @@ export default function App() {
                 )}
               </section>
               <AutomaticHighlights uri={video.uri} durationSeconds={video.duration} native={native} disabled={busy}
-                onAdjust={(candidate) => { setRange({ start: candidate.startMs / 1000, end: candidate.endMs / 1000 }); document.querySelector('[aria-label="Trim editor"]')?.scrollIntoView({ behavior: "smooth" }); }}
+                onAdjust={(candidate) => { setRange({ start: candidate.startMs / 1000, end: candidate.endMs / 1000 }); document.querySelector(`[aria-label="${t("trimEditor")}"]`)?.scrollIntoView({ behavior: "smooth" }); }}
                 onExport={exportCandidates} />
               <LayoutEditor
                 video={video}
@@ -503,19 +497,19 @@ export default function App() {
                       <dd className="break-all">{result.filename}</dd>
                     </div>
                     <div>
-                      <dt className="text-muted-foreground">Duration</dt>
+                      <dt className="text-muted-foreground">{t("duration")}</dt>
                       <dd>{formatDuration(result.duration)}</dd>
                     </div>
                     {result.width && (
                       <div>
-                        <dt className="text-muted-foreground">Resolution</dt>
+                        <dt className="text-muted-foreground">{t("resolution")}</dt>
                         <dd>
                           {result.width} × {result.height}
                         </dd>
                       </div>
                     )}
                     <div>
-                      <dt className="text-muted-foreground">File size</dt>
+                      <dt className="text-muted-foreground">{t("fileSize")}</dt>
                       <dd>{formatBytes(result.fileSize)}</dd>
                     </div>
                     <div>
@@ -531,7 +525,7 @@ export default function App() {
                       }
                     >
                       <ExternalLink size={16} />
-                      Open
+                      {t("open")}
                     </Button>
                     <Button
                       variant="outline"
@@ -543,7 +537,7 @@ export default function App() {
                       }
                     >
                       <Share2 size={16} />
-                      Share
+                      {t("share")}
                     </Button>
                   </div>
                 </section>
@@ -567,17 +561,17 @@ export default function App() {
         </div>
         <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
           {[
-            ["App version", appVersion],
-            ["Platform", getPlatform()],
+            [t("appVersion"), appVersion],
+            [t("platform"), getPlatform()],
             [
-              "Video access",
-              native ? "Native system picker" : "Browser fallback",
+              t("videoAccess"),
+              native ? t("nativePicker") : t("browserFallback"),
             ],
           ].map(([label, value]) => (
             <div key={label} className="rounded-xl bg-black/20 p-4">
               <dt className="text-muted-foreground">{label}</dt>
               <dd className="mt-1 flex items-center gap-2 font-medium">
-                {label === "Video access" && (
+                {label === t("videoAccess") && (
                   <CircleCheck className="text-emerald-400" size={15} />
                 )}
                 {value}

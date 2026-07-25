@@ -2,6 +2,8 @@ package com.wynndev.smartclip.videopicker;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.ClipboardManager;
+import android.content.ClipData;
 import android.content.ContentValues;
 import android.database.Cursor;
 import android.graphics.Bitmap;
@@ -30,6 +32,8 @@ import java.io.OutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.SocketTimeoutException;
+import java.nio.charset.StandardCharsets;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -68,6 +72,42 @@ public class LocalVideoPickerPlugin extends Plugin {
     private final ExecutorService exportExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService analysisExecutor = Executors.newSingleThreadExecutor();
     private Transformer compositionTransformer;
+
+    @PluginMethod
+    public void readClipboard(PluginCall call) {
+        ClipboardManager clipboard = (ClipboardManager) getContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+        CharSequence text = null;
+        if (clipboard != null && clipboard.hasPrimaryClip()) {
+            ClipData clip = clipboard.getPrimaryClip();
+            if (clip != null && clip.getItemCount() > 0) text = clip.getItemAt(0).coerceToText(getContext());
+        }
+        JSObject result = new JSObject(); result.put("value", text == null ? "" : text.toString()); call.resolve(result);
+    }
+
+    /** Native HTTPS transport keeps authenticated requests outside WebView CORS. */
+    @PluginMethod
+    public void backendRequest(PluginCall call) {
+        String url = call.getString("url"), method = call.getString("method", "GET"), token = call.getString("token"), body = call.getString("body");
+        Integer requestedTimeout = call.getInt("timeoutMs");
+        if (url == null || !url.startsWith("https://")) { call.reject("Backend URL must use HTTPS.", "BACKEND_CONFIG"); return; }
+        int timeout = Math.max(1_000, Math.min(120_000, requestedTimeout == null ? 75_000 : requestedTimeout));
+        try { downloadExecutor.execute(() -> {
+            HttpURLConnection connection = null;
+            try {
+                connection = (HttpURLConnection) new URL(url).openConnection();
+                connection.setRequestMethod(method); connection.setConnectTimeout(timeout); connection.setReadTimeout(timeout);
+                connection.setRequestProperty("Accept", "application/json");
+                if (token != null && !token.isEmpty()) connection.setRequestProperty("Authorization", "Bearer " + token);
+                if (body != null) { connection.setDoOutput(true); connection.setRequestProperty("Content-Type", "application/json"); try (OutputStream out = connection.getOutputStream()) { out.write(body.getBytes(StandardCharsets.UTF_8)); } }
+                int status = connection.getResponseCode(); InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+                String responseBody = ""; if (stream != null) { try (InputStream input = stream; java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream()) { byte[] buffer = new byte[8192]; int count; while ((count = input.read(buffer)) != -1) bytes.write(buffer, 0, count); responseBody = bytes.toString("UTF-8"); } }
+                JSObject result = new JSObject(); result.put("status", status); result.put("body", responseBody); call.resolve(result);
+            } catch (SocketTimeoutException error) { call.reject("Backend request timed out.", "TIMEOUT", error);
+            } catch (java.net.UnknownHostException error) { call.reject("No internet connection.", "OFFLINE", error);
+            } catch (Exception error) { call.reject("Native backend request failed.", "NATIVE_HTTP_FAILED", error);
+            } finally { if (connection != null) connection.disconnect(); }
+        }); } catch (RejectedExecutionException error) { call.reject("Native HTTP bridge is unavailable.", "NATIVE_HTTP_UNAVAILABLE", error); }
+    }
 
     @PluginMethod
     public void chooseVideo(PluginCall call) {
@@ -368,16 +408,18 @@ public class LocalVideoPickerPlugin extends Plugin {
     public void exportComposition(PluginCall call) {
         String source = call.getString("uri"); Long startMs = call.getLong("startMs"); Long endMs = call.getLong("endMs");
         Integer width = call.getInt("outputWidth"); Integer height = call.getInt("outputHeight"); JSObject layout = call.getObject("layout");
-        if (source == null || startMs == null || endMs == null || width == null || height == null || layout == null ||
-            startMs < 0 || endMs - startMs < 1000 || !((width == 720 && height == 1280) || (width == 1080 && height == 1920))) {
-            call.reject("Invalid composition settings.", "INVALID_LAYOUT"); return;
-        }
+        if (source == null || source.isEmpty()) { call.reject("The source URI is missing.", "INVALID_SOURCE"); return; }
+        if (startMs == null || endMs == null || startMs < 0 || endMs - startMs < 1000) { call.reject("Trim start and end must define at least one second.", "INVALID_TRIM"); return; }
+        if (width == null || width <= 0) { call.reject("Output width must be a positive number.", "INVALID_OUTPUT_WIDTH"); return; }
+        if (height == null || height <= 0) { call.reject("Output height must be a positive number.", "INVALID_OUTPUT_HEIGHT"); return; }
+        if (!((width == 720 && height == 1280) || (width == 1080 && height == 1920))) { call.reject("Output dimensions must be 720×1280 or 1080×1920.", "INVALID_OUTPUT_SIZE"); return; }
+        if (layout == null) { call.reject("Layout settings are missing.", "INVALID_LAYOUT"); return; }
         JSONObject crop = layout.optJSONObject("gameplayCrop");
-        if (!validRect(crop)) { call.reject("Gameplay crop must be a non-zero region inside the source.", "INVALID_CROP"); return; }
         String mode = layout.getString("mode", "smart-crop");
         if (!"smart-crop".equals(mode) && !"fit-background".equals(mode)) {
             call.reject("Split and manual facecam composition are not yet supported by the Android renderer.", "UNSUPPORTED_LAYOUT"); return;
         }
+        if (!"fit-background".equals(mode) && !validRect(crop)) { call.reject("Gameplay crop must be a non-zero region inside the source.", "INVALID_GAMEPLAY_CROP"); return; }
         long estimated = (long) width * height * Math.max(1, endMs - startMs) / 1000;
         if (new StatFs(getContext().getCacheDir().getAbsolutePath()).getAvailableBytes() < Math.max(150_000_000L, estimated)) {
             call.reject("Insufficient storage for a local composition.", "INSUFFICIENT_STORAGE"); return;

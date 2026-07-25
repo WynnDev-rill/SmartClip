@@ -99,6 +99,14 @@ describe("local video selection", () => {
     expect(await screen.findByText("Export completed")).toBeInTheDocument(); expect(trim.exportNativeClip).toHaveBeenCalledWith(metadata.uri, { start: 0, end: 65 });
   });
 
+  it("normalizes the untouched Smart Crop payload and records a vertical export", async () => {
+    vi.mocked(picker.isNativeAndroid).mockReturnValue(true); vi.mocked(picker.chooseNativeVideo).mockResolvedValue(metadata);
+    vi.mocked(trim.NativeEditor.exportComposition).mockResolvedValue({ filename: "SmartClip_Vertical.mp4", duration: 65, fileSize: 4096, uri: "content://vertical", location: "Movies/SmartClip", width: 720, height: 1280 });
+    render(<App />); await userEvent.click(screen.getByRole("button", { name: "Choose Video" })); await userEvent.click(await screen.findByRole("button", { name: /export vertical mp4/i }));
+    expect(await screen.findByText("SmartClip_Vertical.mp4")).toBeInTheDocument();
+    expect(trim.NativeEditor.exportComposition).toHaveBeenCalledWith(expect.objectContaining({ outputWidth: 1080, outputHeight: 1920, layout: expect.objectContaining({ mode: "smart-crop", focalX: .5, focalY: .5, zoom: 1, gameplayCrop: expect.objectContaining({ width: expect.any(Number), height: 1 }) }) }));
+  });
+
   it("shows native export failure", async () => {
     vi.mocked(picker.isNativeAndroid).mockReturnValue(true); vi.mocked(picker.chooseNativeVideo).mockResolvedValue(metadata); vi.mocked(trim.exportNativeClip).mockRejectedValue(new Error("Insufficient storage"));
     render(<App />); await userEvent.click(screen.getByRole("button", { name: "Choose Video" })); await userEvent.click(await screen.findByRole("button", { name: /export clip/i })); expect(await screen.findByRole("alert")).toHaveTextContent("Insufficient storage");
