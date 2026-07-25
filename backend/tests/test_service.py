@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -21,6 +22,10 @@ from app.media import (
 from app.security import token_matches, validate_url
 
 TOKEN = "test-secret"
+
+
+def test_pinned_ytdlp_dependency_is_installed():
+    assert version("yt-dlp") == "2026.7.4"
 
 
 @pytest.fixture(autouse=True)
